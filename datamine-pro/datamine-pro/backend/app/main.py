@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
+from .country_routes import router as country_router
 
 APP_VERSION = "0.2.0"
 USER_AGENT = os.getenv(
@@ -35,6 +36,7 @@ cancelled_jobs: set[str] = set()
 _host_locks: dict[str, asyncio.Lock] = {}
 
 app = FastAPI(title="DataMine Pro Extraction API", version=APP_VERSION)
+app.include_router(country_router)
 
 allowed_origins = [
     item.strip()
