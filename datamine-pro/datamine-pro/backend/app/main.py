@@ -195,7 +195,7 @@ def _extract_record(html: str, url: str, country: str, index: int) -> dict[str, 
         raw = turnover_match.group(1).lower().replace(" ", "").replace(",", "")
         number = re.search(r"\d+(?:\.\d+)?", raw)
         if number:
-            multiplier = 1_000_000_000 if any(x in raw for x in ("billion", "bn")) else 1_000_000 if any(x in raw for x in ("million", "m")) else 1_000
+            multiplier = 1_000_000_000 if any(x in raw for x in ("billion", "bn")) else 1_000_000 if "million" in raw or re.search(r"\d(?:\.\d+)?m$", raw) else 1_000 if re.search(r"\d(?:\.\d+)?k$", raw) else 1
             try:
                 turnover = int(float(number.group()) * multiplier)
             except ValueError:
