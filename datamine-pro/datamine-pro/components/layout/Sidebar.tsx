@@ -4,9 +4,22 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Database, X } from "lucide-react";
 import { NAV_ITEMS } from "@/lib/nav";
+import { useApp } from "@/context/AppContext";
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const pathname = usePathname();
+  const { dataStatus, companies } = useApp();
+
+  const sourceStatus =
+    dataStatus === "loading"
+      ? "Connecting to extraction backend…"
+      : dataStatus === "ready"
+        ? `Live backend connected · ${companies.length} records loaded.`
+        : dataStatus === "error"
+          ? companies.length > 0
+            ? `Backend unavailable · showing ${companies.length} saved browser records.`
+            : "Backend unavailable · no records loaded."
+          : "Demo mode · showing sample records.";
 
   return (
     <>
@@ -54,9 +67,9 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
           })}
         </nav>
 
-        <div className="m-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs leading-relaxed text-slate-400">
-          <p className="mb-1 font-semibold text-slate-200">Version 0.1 · Frontend demo</p>
-          Scraping backend not connected yet. All records are sample data.
+        <div className="m-3 rounded-xl border border-white/10 bg-white/5 p-4 text-xs leading-relaxed text-slate-400" aria-live="polite">
+          <p className="mb-1 font-semibold text-slate-200">Data source status</p>
+          {sourceStatus}
         </div>
       </aside>
     </>
