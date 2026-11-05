@@ -1,7 +1,7 @@
 /**
  * Contract between this frontend and the FUTURE Python backend (FastAPI + Scrapy/Playwright/Pandas).
  * Nothing here is used for real scraping yet. When you build the backend, make it return these shapes.
- * See /backend/README.md for the endpoint list.
+ * See /backend/README.md for setup and endpoint details.
  */
 import type { Company } from "../types";
 
