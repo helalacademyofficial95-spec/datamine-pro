@@ -125,7 +125,10 @@ def _load_saved_companies() -> list[dict[str, Any]]:
         if isinstance(items, list):
             for item in items:
                 if isinstance(item, dict) and item.get("id"):
-                    records[str(item["id"])] = item
+                    siren = str(item.get("siren") or "").strip()
+                    key = f"{item.get('country', '')}:{siren}" if siren else str(item["id"])
+                    if key not in records:
+                        records[key] = item
     return sorted(
         records.values(),
         key=lambda item: str(item.get("extractedAt") or ""),
@@ -422,8 +425,20 @@ def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
     finances = item.get("finances") if isinstance(item.get("finances"), dict) else {}
     turnover_years = [int(match.group(1)) for key in finances if (match := re.search(r"(20\d{2})", str(key)))]
     turnover_year = max(turnover_years, default=0)
+    director_names: list[str] = []
+    raw_directors = item.get("dirigeants")
+    if isinstance(raw_directors, list):
+        for person in raw_directors:
+            if not isinstance(person, dict):
+                continue
+            first_names = str(person.get("prenoms") or person.get("prenom") or "").strip()
+            last_name = str(person.get("nom") or person.get("nom_usage") or "").strip()
+            full_name = " ".join(part for part in (first_names, last_name) if part)
+            if full_name and full_name not in director_names:
+                director_names.append(full_name)
+    director = ", ".join(director_names[:3])
     return {
-        "id": f"extracted-{uuid.uuid4().hex[:12]}",
+        "id": f"fr-{siren}" if siren else f"extracted-{uuid.uuid4().hex[:12]}",
         "name": str(name)[:180],
         "siren": siren,
         "siret": siret,
@@ -438,7 +453,7 @@ def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
         "sourceUrl": DIRECTORY_API,
         "sourceType": "official_government_api",
         "sourceRecordId": siren,
-        "director": "",
+        "director": director,
         "email": "",
         "phone": "",
         # The official API publishes employee bands, not an exact headcount.
@@ -470,7 +485,7 @@ async def _run_annuaire_directory(
         "per_page": DIRECTORY_PAGE_SIZE,
         "etat_administratif": "A",
         "minimal": "true",
-        "include": "siege,finances,complements",
+        "include": "siege,finances,complements,dirigeants",
     }
     codes = _employee_codes(request.employeeRange)
     if codes:
