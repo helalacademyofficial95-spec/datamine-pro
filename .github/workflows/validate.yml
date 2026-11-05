@@ -1,0 +1,39 @@
+name: Validate DataMine Pro
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feature/python-extraction-backend]
+
+jobs:
+  backend-syntax:
+    name: Backend Python syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile backend modules
+        run: python -m compileall -q datamine-pro/datamine-pro/backend/app
+
+  frontend:
+    name: Frontend typecheck and production build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: datamine-pro/datamine-pro
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: datamine-pro/datamine-pro/package.json
+      - name: Install dependencies
+        run: npm install
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Production build
+        run: npm run build
