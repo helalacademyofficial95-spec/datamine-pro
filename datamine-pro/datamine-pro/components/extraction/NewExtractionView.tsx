@@ -131,7 +131,7 @@ export function NewExtractionView() {
         progress: 100,
         recordsFound: results.companies.length,
         createdAt: new Date().toISOString().slice(0, 10),
-        origin: "demo-run",
+        origin: "extracted",
       });
       setProgressValue(100);
       setStepIndex(SIMULATION_STEPS.length);
