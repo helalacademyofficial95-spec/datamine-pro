@@ -37,7 +37,7 @@ export interface Project {
   progress: number; // 0-100
   recordsFound: number;
   createdAt: string; // ISO date
-  origin: "sample" | "demo-run";
+  origin: "sample" | "demo-run" | "extracted";
 }
 
 export type ExportFormat = "CSV" | "Excel";
