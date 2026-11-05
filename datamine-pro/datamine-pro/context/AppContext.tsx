@@ -60,6 +60,36 @@ function save(key: string, value: unknown) {
   }
 }
 
+function mergeCompanyRecords(records: Company[]): Company[] {
+  const merged = new Map<string, Company>();
+  for (const company of records) {
+    const key = company.siren ? `${company.country}:${company.siren}` : company.id;
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, company);
+      continue;
+    }
+    merged.set(key, {
+      ...previous,
+      ...company,
+      director: company.director || previous.director,
+      email: company.email || previous.email,
+      phone: company.phone || previous.phone,
+      employees: company.employees || previous.employees,
+      employeeBand: company.employeeBand || previous.employeeBand,
+      turnover: company.turnover || previous.turnover,
+      turnoverYear: company.turnoverYear || previous.turnoverYear,
+      address: company.address || previous.address,
+      website: company.website || previous.website,
+      b2cWebsite: company.b2cWebsite || previous.b2cWebsite,
+      b2cWebsiteStatus: company.b2cWebsite || previous.b2cWebsite
+        ? "found"
+        : company.b2cWebsiteStatus || previous.b2cWebsiteStatus,
+    });
+  }
+  return Array.from(merged.values());
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [userProjects, setUserProjects] = useState<Project[]>([]);
   const [extractedCompanies, setExtractedCompanies] = useState<Company[]>([]);
@@ -75,15 +105,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUserProjects(load<Project[]>(KEYS.projects, []));
     setExportLog(load<ExportLogEntry[]>(KEYS.exports, []));
     setPresets(load<FilterPreset[]>(KEYS.presets, []));
-    setExtractedCompanies(load<Company[]>(KEYS.extracted, []));
+    setExtractedCompanies(mergeCompanyRecords(load<Company[]>(KEYS.extracted, [])));
     setLoaded(true);
     if (isBackendConfigured()) {
       api.getCompanies().then(({ companies }) => {
         if (companies.length) {
           setExtractedCompanies((current) => {
-            const merged = new Map<string, Company>();
-            [...current, ...companies].forEach((company) => merged.set(company.id, company));
-            return Array.from(merged.values());
+            return mergeCompanyRecords([...current, ...companies]);
           });
         }
       }).catch(() => {
@@ -112,7 +140,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addProject = useCallback((p: Project) => setUserProjects((prev) => [p, ...prev]), []);
-  const addCompanies = useCallback((records: Company[]) => setExtractedCompanies((prev) => [...records, ...prev]), []);
+  const addCompanies = useCallback((records: Company[]) => setExtractedCompanies((prev) => mergeCompanyRecords([...records, ...prev])), []);
   const deleteProject = useCallback((id: string) => setUserProjects((prev) => prev.filter((p) => p.id !== id)), []);
   const addExportLog = useCallback((e: ExportLogEntry) => setExportLog((prev) => [e, ...prev].slice(0, 100)), []);
   const clearExportLog = useCallback(() => setExportLog([]), []);
