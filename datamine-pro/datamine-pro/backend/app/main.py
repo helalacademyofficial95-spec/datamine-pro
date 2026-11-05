@@ -301,6 +301,18 @@ def _latest_turnover(finances: Any) -> int:
 def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
     name = item.get("nom_complet") or item.get("nom_raison_sociale") or ""
     seat = item.get("siege") if isinstance(item.get("siege"), dict) else {}
+    complements = item.get("complements") if isinstance(item.get("complements"), dict) else {}
+    raw_website = (
+        item.get("site_internet")
+        or item.get("website")
+        or complements.get("site_internet")
+        or complements.get("website")
+        or seat.get("site_internet")
+        or ""
+    )
+    website = str(raw_website).strip()
+    if website and not re.match(r"^https?://", website, re.I):
+        website = f"https://{website}" if re.match(r"^[\w.-]+\.[A-Za-z]{2,}(/.*)?$", website) else ""
     address_parts = [
         seat.get("numero_voie"), seat.get("type_voie"), seat.get("libelle_voie"),
         seat.get("complement_adresse"), seat.get("code_postal"), seat.get("libelle_commune"),
@@ -377,6 +389,7 @@ async def _run_annuaire_directory(
     seen_companies: set[str] = set()
     total_requests = len(DIRECTORY_SEARCH_TERMS) * MAX_DIRECTORY_PAGES
     completed_requests = 0
+    websites_enriched = 0
     for term in DIRECTORY_SEARCH_TERMS:
         total_pages = 1
         for page in range(1, MAX_DIRECTORY_PAGES + 1):
