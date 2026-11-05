@@ -8,6 +8,7 @@ import { countActiveFilters, filterCompanies, sortCompanies } from "@/lib/filter
 import type { SortDir, SortKey } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DemoNotice } from "@/components/ui/DemoNotice";
+import { DataStatusBanner } from "@/components/ui/DataStatusBanner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SampleBadge } from "@/components/ui/Badge";
 import { VerificationBadge } from "@/components/ui/VerificationBadge";
@@ -56,7 +57,7 @@ const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
 ];
 
 export function CompaniesView() {
-  const { companies, filters, setFilters, resetFilters } = useApp();
+  const { companies, isDemoData, filters, setFilters, resetFilters } = useApp();
   const [showFilters, setShowFilters] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -81,7 +82,6 @@ export function CompaniesView() {
   const pageAllSelected = pageRows.length > 0 && pageRows.every((c) => selectedIds.has(c.id));
   const pageSomeSelected = pageRows.some((c) => selectedIds.has(c.id));
   const activeFilters = countActiveFilters(filters);
-  const isDemoData = companies.length === 0 || companies.every((company) => company.origin === "sample");
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -116,6 +116,7 @@ export function CompaniesView() {
     <>
       <PageHeader title="Extracted Companies" description="Search, filter, sort and export company records." />
       {isDemoData && <DemoNotice />}
+      <DataStatusBanner />
 
       <div className="card mb-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">

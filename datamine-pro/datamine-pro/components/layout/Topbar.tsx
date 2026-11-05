@@ -15,7 +15,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         <Menu className="h-5 w-5" />
       </button>
       <div className="flex-1" />
-      <SampleBadge label={isBackendConfigured() ? "Backend configured" : "Demo · sample data"} />
+      <SampleBadge label={isBackendConfigured() ? "Live backend" : "Demo · sample data"} />
       <button
         onClick={toggleTheme}
         className="btn-secondary h-10 w-10 !p-0"
