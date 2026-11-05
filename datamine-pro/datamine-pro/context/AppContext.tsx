@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Company, ExportLogEntry, Project } from "@/lib/types";
 import { SAMPLE_COMPANIES, SAMPLE_PROJECTS } from "@/lib/sampleData";
 import { CompanyFilters, DEFAULT_FILTERS } from "@/lib/filters";
+import { api, isBackendConfigured } from "@/lib/api/client";
 
 /** A named set of filters the user saved on the Data Filters page. */
 export interface FilterPreset {
@@ -76,6 +77,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPresets(load<FilterPreset[]>(KEYS.presets, []));
     setExtractedCompanies(load<Company[]>(KEYS.extracted, []));
     setLoaded(true);
+    if (isBackendConfigured()) {
+      api.getCompanies().then(({ companies }) => {
+        if (companies.length) {
+          setExtractedCompanies((current) => {
+            const merged = new Map<string, Company>();
+            [...current, ...companies].forEach((company) => merged.set(company.id, company));
+            return Array.from(merged.values());
+          });
+        }
+      }).catch(() => {
+        // Keep locally saved records available if the backend cannot be reached.
+      });
+    }
   }, []);
 
   useEffect(() => {
