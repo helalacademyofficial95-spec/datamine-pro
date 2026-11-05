@@ -16,6 +16,33 @@ import { Pagination } from "./Pagination";
 import { ExportBar } from "./ExportBar";
 import { formatEuro, formatNumber, prettyUrl } from "@/lib/format";
 
+function employeeDisplay(company: { employees: number; employeeBand?: string }) {
+  if (company.employeeBand && company.employeeBand !== "00") {
+    const ranges: Record<string, string> = {
+      "01": "1–2", "02": "3–5", "03": "6–9", "11": "10–19",
+      "12": "20–49", "21": "50–99", "22": "100–199",
+      "31": "200–249", "32": "250–499", "41": "500–999",
+      "42": "1,000–1,999", "51": "2,000–4,999",
+      "52": "5,000–9,999", "53": "10,000+",
+    };
+    return ranges[company.employeeBand] ?? `Band ${company.employeeBand}`;
+  }
+  return company.employees > 0 ? formatNumber(company.employees) : "Not published";
+}
+
+function b2cStatusLabel(status?: string) {
+  const labels: Record<string, string> = {
+    no_official_website_in_registry: "No official website in registry",
+    not_checked_enrichment_limit: "Not checked (processing limit)",
+    not_found_on_checked_homepage: "Not found on checked homepage",
+    website_unavailable: "Official website unavailable",
+    robots_disallowed_or_unavailable: "Website check not permitted",
+    website_check_failed: "Website check failed",
+    not_checked: "Not checked yet",
+  };
+  return status ? labels[status] ?? status.replaceAll("_", " ") : "Not checked yet";
+}
+
 const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
   { key: "name", label: "Company Name" },
   { key: "director", label: "Director" },
@@ -185,21 +212,25 @@ export function CompaniesView() {
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{c.name}</span>
+                        {c.registryUrl && (
+                          <a href={c.registryUrl} target="_blank" rel="noreferrer" className="text-xs text-brand hover:underline" aria-label={`Open official registry record for ${c.name}`}>Official record</a>
+                        )}
                         {c.origin === "sample" && <SampleBadge label="Sample" />}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">{c.director}</td>
                     <td className="px-3 py-3 text-muted">{c.email}</td>
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted">{c.phone}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{formatNumber(c.employees)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{formatEuro(c.turnover)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{employeeDisplay(c)}</td>
+                    <td className="px-3 py-3 text-right tabular-nums">{c.turnover > 0 ? `${formatEuro(c.turnover)}${c.turnoverYear ? ` (${c.turnoverYear})` : ""}` : "Not published"}</td>
                     <td className="px-3 py-3">{c.country}</td>
                     <td className="px-3 py-3">
                       {c.b2cWebsite ? (
-                        <span className="text-brand">{prettyUrl(c.b2cWebsite)}</span>
+                        <a href={c.b2cWebsite} target="_blank" rel="noreferrer" className="text-brand hover:underline">{prettyUrl(c.b2cWebsite)}</a>
                       ) : (
-                        <span className="text-muted">—</span>
+                        <span className="text-muted">{b2cStatusLabel(c.b2cWebsiteStatus)}</span>
                       )}
+                      {c.website && <div><a href={c.website} target="_blank" rel="noreferrer" className="text-xs text-brand hover:underline">Official website</a></div>}
                     </td>
                     <td className="px-3 py-3"><VerificationBadge status={c.verification} /></td>
                   </tr>
