@@ -23,7 +23,8 @@ USER_AGENT = os.getenv(
     "DataMineProBot/0.1 (+contact: admin@datamine-pro.example)",
 )
 MAX_PAGES_PER_SOURCE = 6
-MAX_DIRECTORY_PAGES = 10
+MAX_DIRECTORY_PAGES = 3
+DIRECTORY_SEARCH_TERMS = ["commerce", "vente", "boutique", "magasin", "e-commerce", "vente en ligne"]
 DIRECTORY_PAGE_SIZE = 25
 REQUEST_TIMEOUT = 20.0
 HOST_DELAY_SECONDS = 1.0
@@ -262,6 +263,8 @@ EMPLOYEE_BANDS = [
 
 
 def _employee_codes(employee_range: RangeFilter) -> list[str]:
+    if employee_range.min is None and employee_range.max is None:
+        return []
     lower = employee_range.min if employee_range.min is not None else 0
     upper = employee_range.max if employee_range.max is not None else 10**9
     return [
@@ -341,8 +344,7 @@ async def _run_annuaire_directory(
 ) -> list[dict[str, Any]]:
     if request.country != "France":
         raise RuntimeError("The Annuaire des Entreprises connector currently supports France only. Select France and try again.")
-    params: dict[str, Any] = {
-        "page": 1,
+    base_params: dict[str, Any] = {
         "per_page": DIRECTORY_PAGE_SIZE,
         "etat_administratif": "A",
         "minimal": "true",
@@ -350,73 +352,87 @@ async def _run_annuaire_directory(
     }
     codes = _employee_codes(request.employeeRange)
     if codes:
-        params["tranche_effectif_salarie"] = ",".join(codes)
+        base_params["tranche_effectif_salarie"] = ",".join(codes)
     if request.turnoverRange.min is not None:
-        params["ca_min"] = request.turnoverRange.min
+        base_params["ca_min"] = request.turnoverRange.min
     if request.turnoverRange.max is not None:
-        params["ca_max"] = request.turnoverRange.max
+        base_params["ca_max"] = request.turnoverRange.max
 
     collected: list[dict[str, Any]] = []
-    total_pages = 1
-    for page in range(1, MAX_DIRECTORY_PAGES + 1):
+    seen_companies: set[str] = set()
+    total_requests = len(DIRECTORY_SEARCH_TERMS) * MAX_DIRECTORY_PAGES
+    completed_requests = 0
+    for term in DIRECTORY_SEARCH_TERMS:
+        total_pages = 1
+        for page in range(1, MAX_DIRECTORY_PAGES + 1):
+            if job_id in cancelled_jobs:
+                return collected
+            params = {**base_params, "q": term, "page": page}
+            try:
+                response = await client.get(
+                    DIRECTORY_API,
+                    params=params,
+                    headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+                )
+            except httpx.HTTPError as exc:
+                raise RuntimeError(f"Could not reach the official French company search API: {type(exc).__name__}.") from exc
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After", "a short time")
+                raise RuntimeError(f"The official directory API rate limit was reached. Retry after {retry_after}.")
+            if response.status_code != 200:
+                raise RuntimeError(f"The official directory API returned HTTP {response.status_code}. Check its availability and try again.")
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise RuntimeError("The official directory API returned an unreadable response.") from exc
+            results = payload.get("results", []) if isinstance(payload, dict) else []
+            if not isinstance(results, list):
+                raise RuntimeError("The official directory API response did not contain a results list.")
+            total_pages = int(payload.get("total_pages", 1) or 1)
+            for item in results:
+                if not isinstance(item, dict):
+                    continue
+                siren = str(item.get("siren") or "").strip()
+                dedupe_key = siren or "|".join([
+                    str(item.get("nom_complet") or item.get("nom_raison_sociale") or "").strip().lower(),
+                    str((item.get("siege") or {}).get("siret") or ""),
+                ])
+                if not dedupe_key.strip("|") or dedupe_key in seen_companies:
+                    continue
+                seen_companies.add(dedupe_key)
+                record = _directory_record(item, request.country)
+                if not record["name"]:
+                    continue
+                # Enrich only when the official API itself supplies a company website.
+                # Respect that website's robots.txt and keep B2C blank unless an explicit
+                # storefront link is visible on that company website.
+                website = record["website"]
+                if website:
+                    try:
+                        if await _robots_allows(client, website):
+                            html = await _get_page(client, website)
+                            if html:
+                                storefront = _storefront_from_html(html, website)
+                                record["b2cWebsite"] = storefront
+                                page_record = _extract_record(html, website, request.country, len(collected))
+                                record["email"] = page_record["email"]
+                                record["phone"] = page_record["phone"]
+                                if not record["address"]:
+                                    record["address"] = page_record["address"]
+                    except (ValueError, httpx.HTTPError):
+                        pass
+                collected.append(record)
+            completed_requests += 1
+            jobs[job_id].update(
+                progress=min(88, 12 + int(76 * completed_requests / max(1, total_requests))),
+                recordsFound=len(collected),
+                message=f"Searching French B2C businesses: '{term}', page {page} of {min(total_pages, MAX_DIRECTORY_PAGES)}",
+            )
+            if not results or page >= total_pages or page >= MAX_DIRECTORY_PAGES:
+                break
+            await asyncio.sleep(0.5)
         if job_id in cancelled_jobs:
             return collected
-        params["page"] = page
-        try:
-            response = await client.get(
-                DIRECTORY_API,
-                params=params,
-                headers={"Accept": "application/json", "User-Agent": USER_AGENT},
-            )
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Could not reach the official French company search API: {type(exc).__name__}.") from exc
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After", "a short time")
-            raise RuntimeError(f"The official directory API rate limit was reached. Retry after {retry_after}.")
-        if response.status_code != 200:
-            raise RuntimeError(f"The official directory API returned HTTP {response.status_code}. Check its availability and try again.")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise RuntimeError("The official directory API returned an unreadable response.") from exc
-        results = payload.get("results", []) if isinstance(payload, dict) else []
-        if not isinstance(results, list):
-            raise RuntimeError("The official directory API response did not contain a results list.")
-        total_pages = int(payload.get("total_pages", 1) or 1)
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            record = _directory_record(item, request.country)
-            if not record["name"]:
-                continue
-            # Enrich only when the official API itself supplies a company website.
-            # Respect that website's robots.txt and keep B2C blank unless an explicit
-            # storefront link is visible on that company website.
-            website = record["website"]
-            if website:
-                try:
-                    if await _robots_allows(client, website):
-                        html = await _get_page(client, website)
-                        if html:
-                            storefront = _storefront_from_html(html, website)
-                            record["b2cWebsite"] = storefront
-                            page_record = _extract_record(html, website, request.country, len(collected))
-                            record["email"] = page_record["email"]
-                            record["phone"] = page_record["phone"]
-                            if not record["address"]:
-                                record["address"] = page_record["address"]
-                except (ValueError, httpx.HTTPError):
-                    pass
-            collected.append(record)
-        jobs[job_id].update(
-            progress=min(88, 12 + int(76 * page / max(1, min(total_pages, MAX_DIRECTORY_PAGES)))),
-            recordsFound=len(collected),
-            message=f"Searching official French company directory: page {page} of {min(total_pages, MAX_DIRECTORY_PAGES)}",
-        )
-        if not results or page >= total_pages or page >= MAX_DIRECTORY_PAGES:
-            break
-        # Stay comfortably below the API's published per-IP request ceiling.
-        await asyncio.sleep(0.3)
 
     requested = set(request.fields)
     field_map = {
