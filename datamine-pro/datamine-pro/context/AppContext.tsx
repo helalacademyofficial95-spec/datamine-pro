@@ -17,6 +17,7 @@ interface AppContextValue {
   companies: Company[];
   projects: Project[];
   addProject: (p: Project) => void;
+  addCompanies: (companies: Company[]) => void;
   deleteProject: (id: string) => void;
   exportLog: ExportLogEntry[];
   addExportLog: (e: ExportLogEntry) => void;
@@ -59,6 +60,7 @@ function save(key: string, value: unknown) {
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [userProjects, setUserProjects] = useState<Project[]>([]);
+  const [extractedCompanies, setExtractedCompanies] = useState<Company[]>([]);
   const [exportLog, setExportLog] = useState<ExportLogEntry[]>([]);
   const [presets, setPresets] = useState<FilterPreset[]>([]);
   const [filters, setFilters] = useState<CompanyFilters>(DEFAULT_FILTERS);
@@ -91,6 +93,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addProject = useCallback((p: Project) => setUserProjects((prev) => [p, ...prev]), []);
+  const addCompanies = useCallback((records: Company[]) => setExtractedCompanies((prev) => [...records, ...prev]), []);
   const deleteProject = useCallback((id: string) => setUserProjects((prev) => prev.filter((p) => p.id !== id)), []);
   const addExportLog = useCallback((e: ExportLogEntry) => setExportLog((prev) => [e, ...prev].slice(0, 100)), []);
   const clearExportLog = useCallback(() => setExportLog([]), []);
@@ -117,9 +120,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppContextValue>(
     () => ({
-      companies: SAMPLE_COMPANIES,
+      companies: [...extractedCompanies, ...SAMPLE_COMPANIES],
       projects,
       addProject,
+      addCompanies,
       deleteProject,
       exportLog,
       addExportLog,
@@ -135,7 +139,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast,
     }),
     [
-      projects, addProject, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
+      projects, addProject, addCompanies, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
       presets, savePreset, deletePreset, resetDemoData, toast, showToast,
     ]
   );
