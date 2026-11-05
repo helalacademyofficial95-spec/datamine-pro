@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import os
 import re
 import socket
+
+import psycopg
 import uuid
 from datetime import date
 from typing import Any
@@ -42,9 +45,101 @@ DIRECTORY_HOST = "annuaire-entreprises.data.gouv.fr"
 jobs: dict[str, dict[str, Any]] = {}
 cancelled_jobs: set[str] = set()
 _host_locks: dict[str, asyncio.Lock] = {}
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+
+def _init_database() -> None:
+    if not DATABASE_URL:
+        return
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS extraction_jobs (
+                id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0,
+                message TEXT NOT NULL DEFAULT '',
+                records_found INTEGER NOT NULL DEFAULT 0,
+                companies JSONB NOT NULL DEFAULT '[]'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        connection.execute("""
+            UPDATE extraction_jobs
+            SET state = 'failed',
+                message = 'The service restarted before this job finished. Start a new extraction; previously completed records are preserved.',
+                updated_at = NOW()
+            WHERE state IN ('queued', 'running')
+        """)
+
+
+def _save_job(job: dict[str, Any]) -> None:
+    if not DATABASE_URL:
+        raise RuntimeError("Persistent database is not configured.")
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+        connection.execute("""
+            INSERT INTO extraction_jobs
+                (id, state, progress, message, records_found, companies, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                state = EXCLUDED.state,
+                progress = EXCLUDED.progress,
+                message = EXCLUDED.message,
+                records_found = EXCLUDED.records_found,
+                companies = EXCLUDED.companies,
+                updated_at = NOW()
+        """, (
+            job["id"], job["state"], int(job.get("progress", 0)),
+            str(job.get("message", "")), int(job.get("recordsFound", 0)),
+            json.dumps(job.get("companies", []), ensure_ascii=False),
+        ))
+
+
+def _load_saved_job(job_id: str) -> dict[str, Any] | None:
+    if not DATABASE_URL:
+        return None
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+        row = connection.execute("""
+            SELECT id, state, progress, message, records_found, companies
+            FROM extraction_jobs WHERE id = %s
+        """, (job_id,)).fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0], "state": row[1], "progress": row[2],
+        "message": row[3], "recordsFound": row[4], "companies": row[5] or [],
+    }
+
+
+def _load_saved_companies() -> list[dict[str, Any]]:
+    if not DATABASE_URL:
+        return []
+    with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
+        rows = connection.execute("""
+            SELECT companies FROM extraction_jobs
+            WHERE state = 'completed'
+            ORDER BY updated_at DESC
+        """).fetchall()
+    records: dict[str, dict[str, Any]] = {}
+    for (items,) in rows:
+        if isinstance(items, list):
+            for item in items:
+                if isinstance(item, dict) and item.get("id"):
+                    records[str(item["id"])] = item
+    return sorted(
+        records.values(),
+        key=lambda item: str(item.get("extractedAt") or ""),
+        reverse=True,
+    )
 
 app = FastAPI(title="DataMine Pro Extraction API", version=APP_VERSION)
 app.include_router(country_router)
+
+
+@app.on_event("startup")
+async def initialize_persistent_storage() -> None:
+    _init_database()
+
 
 allowed_origins = [
     item.strip()
@@ -552,17 +647,31 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                 else "Extraction finished. Missing values are left blank; no details were invented."
             ),
         )
+        _save_job(job)
     except Exception as exc:
         job.update(state="failed", message=f"Extraction failed: {str(exc)[:240]}")
+        try:
+            _save_job(job)
+        except Exception:
+            pass
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "version": APP_VERSION}
+async def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "version": APP_VERSION,
+        "persistentStorage": bool(DATABASE_URL),
+    }
 
 
 @app.post("/jobs", response_model=ExtractionJob, status_code=202)
 async def create_job(payload: ExtractionRequest, background_tasks: BackgroundTasks) -> ExtractionJob:
+    if not DATABASE_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="Persistent storage is not configured. Connect a PostgreSQL database before starting an extraction so results cannot be lost on a service restart.",
+        )
     if not payload.complianceConfirmed:
         raise HTTPException(status_code=400, detail="Please confirm you are allowed to collect from these sources.")
     if payload.employeeRange.min is not None and payload.employeeRange.max is not None and payload.employeeRange.min > payload.employeeRange.max:
@@ -574,15 +683,20 @@ async def create_job(payload: ExtractionRequest, background_tasks: BackgroundTas
         "id": job_id, "state": "queued", "progress": 0,
         "message": "Job queued", "recordsFound": 0, "companies": [],
     }
+    try:
+        _save_job(jobs[job_id])
+    except Exception as exc:
+        jobs.pop(job_id, None)
+        raise HTTPException(status_code=503, detail=f"Could not save the extraction job: {str(exc)[:160]}") from exc
     background_tasks.add_task(_run_job, job_id, payload)
     return ExtractionJob(**{key: jobs[job_id][key] for key in ("id", "state", "progress", "message", "recordsFound")})
 
 
 @app.get("/jobs/{job_id}", response_model=ExtractionJob)
 async def get_job(job_id: str) -> ExtractionJob:
-    job = jobs.get(job_id)
+    job = jobs.get(job_id) or _load_saved_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found. Jobs are stored in memory on this starter service.")
+        raise HTTPException(status_code=404, detail="Job not found.")
     return ExtractionJob(**{key: job[key] for key in ("id", "state", "progress", "message", "recordsFound")})
 
 
@@ -594,6 +708,7 @@ async def cancel_job(job_id: str) -> ExtractionJob:
     cancelled_jobs.add(job_id)
     if job["state"] in {"queued", "running"}:
         job.update(state="cancelled", message="Cancellation requested")
+        _save_job(job)
     return ExtractionJob(**{key: job[key] for key in ("id", "state", "progress", "message", "recordsFound")})
 
 
@@ -601,18 +716,13 @@ async def cancel_job(job_id: str) -> ExtractionJob:
 
 @app.get("/companies")
 async def list_extracted_companies() -> dict[str, Any]:
-    """Return completed extraction records still held by this service process."""
-    records: list[dict[str, Any]] = []
-    for job in jobs.values():
-        if job.get("state") == "completed":
-            records.extend(job.get("companies", []))
-    # Keep the newest completed job records first; callers deduplicate by record id.
-    records.sort(key=lambda item: str(item.get("extractedAt") or ""), reverse=True)
+    """Return all completed extraction records from persistent storage."""
+    records = _load_saved_companies()
     return {"companies": records, "count": len(records)}
 
 @app.get("/jobs/{job_id}/results")
 async def get_results(job_id: str) -> dict[str, Any]:
-    job = jobs.get(job_id)
+    job = jobs.get(job_id) or _load_saved_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     summary = ExtractionJob(**{key: job[key] for key in ("id", "state", "progress", "message", "recordsFound")})
