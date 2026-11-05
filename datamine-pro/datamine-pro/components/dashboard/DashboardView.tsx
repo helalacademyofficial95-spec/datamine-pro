@@ -6,6 +6,7 @@ import { Building2, CheckCircle2, Globe2, MailCheck, PhoneCall, Rocket } from "l
 import { useApp } from "@/context/AppContext";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DemoNotice } from "@/components/ui/DemoNotice";
+import { DataStatusBanner } from "@/components/ui/DataStatusBanner";
 import { StatCard } from "./StatCard";
 import { ActivityChart } from "./ActivityChart";
 import { RecentProjects } from "./RecentProjects";
@@ -13,8 +14,7 @@ import { RecentCompanies } from "./RecentCompanies";
 import { formatNumber } from "@/lib/format";
 
 export function DashboardView() {
-  const { companies, projects } = useApp();
-  const isDemoData = companies.length === 0 || companies.every((company) => company.origin === "sample");
+  const { companies, projects, isDemoData } = useApp();
 
   const stats = useMemo(() => {
     const total = companies.length;
@@ -47,6 +47,7 @@ export function DashboardView() {
         }
       />
       {isDemoData && <DemoNotice />}
+      <DataStatusBanner />
 
       <section aria-label="Key statistics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Total Companies" value={formatNumber(stats.total)} hint={isDemoData ? "Sample records" : "Company records"} icon={Building2} />

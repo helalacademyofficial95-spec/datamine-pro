@@ -13,9 +13,20 @@ export interface FilterPreset {
   filters: CompanyFilters;
 }
 
+/**
+ * loading: asking the backend for records; ready: backend answered (possibly with zero records);
+ * error: backend unreachable (cached real records, if any, are shown); demo: backend disabled on purpose.
+ */
+export type DataStatus = "loading" | "ready" | "error" | "demo";
+
 interface AppContextValue {
-  /** Built-in sample records plus real records returned by the extraction backend. */
+  /** Real records from the extraction backend. Sample records appear only in explicit demo mode. */
   companies: Company[];
+  dataStatus: DataStatus;
+  dataError: string | null;
+  /** True only when the records on screen are the built-in invented samples. */
+  isDemoData: boolean;
+  reloadCompanies: () => Promise<void>;
   projects: Project[];
   addProject: (p: Project) => void;
   addCompanies: (companies: Company[]) => void;
@@ -98,27 +109,44 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [filters, setFilters] = useState<CompanyFilters>(DEFAULT_FILTERS);
   const [toast, setToast] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [dataStatus, setDataStatus] = useState<DataStatus>(isBackendConfigured() ? "loading" : "demo");
+  const [dataError, setDataError] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /**
+   * The backend database is the source of truth. A successful response REPLACES the
+   * browser cache (the cache is only an offline fallback). Nothing is deleted server-side.
+   */
+  const reloadCompanies = useCallback(async () => {
+    if (!isBackendConfigured()) {
+      setDataStatus("demo");
+      return;
+    }
+    setDataStatus("loading");
+    setDataError(null);
+    try {
+      const { companies } = await api.getCompanies();
+      const real = (Array.isArray(companies) ? companies : []).filter((c) => c.origin !== "sample");
+      setExtractedCompanies(mergeCompanyRecords(real));
+      setDataStatus("ready");
+    } catch (error) {
+      setDataError(error instanceof Error ? error.message : "Could not load records from the extraction service.");
+      setDataStatus("error");
+    }
+  }, []);
 
   // Load saved data once, in the browser only (avoids server/browser mismatch)
   useEffect(() => {
     setUserProjects(load<Project[]>(KEYS.projects, []));
     setExportLog(load<ExportLogEntry[]>(KEYS.exports, []));
     setPresets(load<FilterPreset[]>(KEYS.presets, []));
-    setExtractedCompanies(mergeCompanyRecords(load<Company[]>(KEYS.extracted, [])));
+    // Cached records are shown while the backend loads, but invented samples are never accepted from the cache.
+    setExtractedCompanies(
+      mergeCompanyRecords(load<Company[]>(KEYS.extracted, []).filter((c) => c.origin !== "sample"))
+    );
     setLoaded(true);
-    if (isBackendConfigured()) {
-      api.getCompanies().then(({ companies }) => {
-        if (companies.length) {
-          setExtractedCompanies((current) => {
-            return mergeCompanyRecords([...current, ...companies]);
-          });
-        }
-      }).catch(() => {
-        // Keep locally saved records available if the backend cannot be reached.
-      });
-    }
-  }, []);
+    void reloadCompanies();
+  }, [reloadCompanies]);
 
   useEffect(() => {
     if (loaded) save(KEYS.projects, userProjects);
@@ -165,9 +193,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const projects = useMemo(() => (userProjects.length > 0 ? userProjects : SAMPLE_PROJECTS), [userProjects]);
 
+  // Samples are used only when the backend is disabled on purpose (demo mode) and nothing real exists.
+  const companies = useMemo(
+    () => (isBackendConfigured() ? extractedCompanies : extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES),
+    [extractedCompanies]
+  );
+  const isDemoData = companies.length > 0 && companies.every((c) => c.origin === "sample");
+
   const value = useMemo<AppContextValue>(
     () => ({
-      companies: isBackendConfigured() ? extractedCompanies : (extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES),
+      companies,
+      dataStatus,
+      dataError,
+      isDemoData,
+      reloadCompanies,
       projects,
       addProject,
       addCompanies,
@@ -186,8 +225,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast,
     }),
     [
-      extractedCompanies, projects, addProject, addCompanies, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
-      presets, savePreset, deletePreset, resetDemoData, toast, showToast,
+      companies, dataStatus, dataError, isDemoData, reloadCompanies, projects, addProject, addCompanies, deleteProject, exportLog,
+      addExportLog, clearExportLog, filters, resetFilters, presets, savePreset, deletePreset, resetDemoData, toast, showToast,
     ]
   );
 
