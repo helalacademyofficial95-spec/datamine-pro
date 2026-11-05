@@ -10,13 +10,13 @@ import {
   COUNTRY_OPTIONS, CountryOption, EMPLOYEE_OPTIONS, FIELD_OPTIONS, MAX_SOURCES, SIMULATION_STEPS, TURNOVER_OPTIONS, validateUrl,
 } from "@/lib/extraction";
 import { parseNumber } from "@/lib/filters";
-import { isBackendConfigured } from "@/lib/api/client";
+import { api, isBackendConfigured } from "@/lib/api/client";
 import { prettyUrl } from "@/lib/format";
 
-type RunState = "idle" | "running" | "done";
+type RunState = "idle" | "running" | "done" | "failed" | "cancelled";
 
 export function NewExtractionView() {
-  const { addProject, showToast } = useApp();
+  const { addProject, addCompanies, showToast } = useApp();
 
   const [projectName, setProjectName] = useState("");
   const [urlInput, setUrlInput] = useState("");
@@ -34,6 +34,10 @@ export function NewExtractionView() {
 
   const [runState, setRunState] = useState<RunState>("idle");
   const [stepIndex, setStepIndex] = useState(0);
+  const [progressValue, setProgressValue] = useState(0);
+  const [jobMessage, setJobMessage] = useState("");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const finishedName = useRef("");
 
@@ -114,11 +118,11 @@ export function NewExtractionView() {
     setConfirmed(false);
   }
 
-  const progress = Math.round((Math.min(stepIndex, SIMULATION_STEPS.length) / SIMULATION_STEPS.length) * 100);
+  const progress = progressValue;
 
   return (
     <>
-      <PageHeader title="New Extraction" description="Describe which public company information you want to collect. In this version the run is a simulation." />
+      <PageHeader title="New Extraction" description="Submit public company websites to the connected Python extraction service." />
 
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-dashed border-warn/50 bg-warn/10 px-4 py-3 text-sm">
         <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
@@ -130,7 +134,7 @@ export function NewExtractionView() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <form className="space-y-6 xl:col-span-2" onSubmit={(e) => { e.preventDefault(); startDemoRun(); }} noValidate>
+        <form className="space-y-6 xl:col-span-2" onSubmit={(e) => { e.preventDefault(); startExtraction(); }} noValidate>
           {/* Source websites */}
           <fieldset className="card p-5" disabled={runState !== "idle"}>
             <legend className="sr-only">Source websites</legend>
@@ -263,7 +267,7 @@ export function NewExtractionView() {
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted" aria-live="polite">{problems.length > 0 && runState === "idle" ? `To continue: ${problems.join(" · ")}` : ""}</p>
               <button type="submit" className="btn-primary" disabled={!canStart}>
-                <Play className="h-4 w-4" aria-hidden /> Start Extraction (demo)
+                <Play className="h-4 w-4" aria-hidden /> Start Extraction
               </button>
             </div>
           </div>
@@ -274,12 +278,12 @@ export function NewExtractionView() {
           <div className="card p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold">Workflow</h2>
-              <Badge tone="warn">Simulation</Badge>
+              <Badge tone={runState === "failed" ? "danger" : runState === "done" ? "success" : "info"}>{runState === "running" ? "Running" : runState === "done" ? "Completed" : runState === "failed" ? "Failed" : runState === "cancelled" ? "Cancelled" : "Ready"}</Badge>
             </div>
 
             {runState === "idle" && (
               <p className="text-sm text-muted">
-                When you start, these steps run as an animation. Real extraction will be added when the Python backend is connected.
+                {isBackendConfigured() ? "Start a job to collect permitted public company information from the source websites." : "The backend must be deployed and its URL configured before extraction can start."}
               </p>
             )}
 
@@ -309,7 +313,7 @@ export function NewExtractionView() {
               <button className="btn-secondary mt-5 w-full" onClick={cancelRun}>Cancel simulation</button>
             )}
 
-            {runState === "done" && (
+            {jobMessage && runState !== "idle" && <p className="mt-3 text-xs text-muted" aria-live="polite">{jobMessage}</p>}\n            {runError && <p role="alert" className="mt-3 text-sm text-bad">{runError}</p>}\n            {runState === "failed" && <button className="btn-secondary mt-4 w-full" onClick={resetForm}>Try again</button>}\n            {runState === "cancelled" && <button className="btn-secondary mt-4 w-full" onClick={resetForm}>Configure another</button>}\n            {runState === "done" && (
               <div className="mt-5 rounded-xl border border-line bg-raised p-4 text-sm">
                 <p className="font-semibold">Demo run finished</p>
                 <p className="mt-1 text-muted">
