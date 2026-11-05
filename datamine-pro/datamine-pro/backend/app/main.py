@@ -175,17 +175,48 @@ def _extract_record(html: str, url: str, country: str, index: int) -> dict[str, 
                 address = candidate
                 break
 
-    # Only report a B2C URL when the source page explicitly links to a shop/store/customer storefront.
-    b2c = None
+    # Match a B2C storefront only when the source explicitly identifies a shop.
+    # Consider visible/accessibility labels and shop-like URL paths; never invent domains.
+    b2c_candidates: list[tuple[int, str]] = []
+    shop_terms = re.compile(
+        r"\b(shop|store|boutique|webshop|e-shop|ecommerce|online shop|"
+        r"buy online|shop online|winkel|webwinkel|magasin|acheter|commander|"
+        r"boutique en ligne|tienda|comprar|loja|comprar online)\b",
+        re.I,
+    )
+    shop_path_terms = re.compile(
+        r"/(shop|store|boutique|webshop|e-shop|online-shop|shop-online)(/|$|[?#-])",
+        re.I,
+    )
+    excluded_hosts = {
+        "facebook.com", "instagram.com", "linkedin.com", "pinterest.com",
+        "youtube.com", "tiktok.com", "x.com", "twitter.com",
+    }
     for anchor in soup.find_all("a", href=True):
-        label = anchor.get_text(" ", strip=True).lower()
-        href = urljoin(url, anchor["href"])
+        href = urljoin(url, anchor["href"].strip())
         parsed_href = urlparse(href)
-        if parsed_href.scheme not in {"http", "https"}:
+        if parsed_href.scheme not in {"http", "https"} or not parsed_href.hostname:
             continue
-        if re.search(r"\b(shop|store|boutique|online shop|e-shop|ecommerce|consumer|buy online)\b", label):
-            b2c = href
-            break
+        host = parsed_href.hostname.lower().removeprefix("www.")
+        if host in excluded_hosts or any(host.endswith("." + item) for item in excluded_hosts):
+            continue
+        label = " ".join([
+            anchor.get_text(" ", strip=True),
+            str(anchor.get("aria-label", "")),
+            str(anchor.get("title", "")),
+        ]).strip()
+        score = 0
+        if shop_terms.search(label):
+            score += 3
+        if shop_path_terms.search(parsed_href.path):
+            score += 2
+        if re.search(r"(?i)(shopify|myshopify|woocommerce)", href):
+            score += 1
+        if score >= 3:
+            b2c_candidates.append((score, href))
+
+    # Prefer the clearest explicit storefront link; preserve the source's exact URL.
+    b2c = max(b2c_candidates, key=lambda item: item[0])[1] if b2c_candidates else None
 
     employee_match = re.search(r"(?i)(?:employees|team size|staff)\D{0,30}(\d[\d, .]*)", text)
     turnover_match = re.search(r"(?i)(?:annual turnover|revenue|chiffre d'affaires)\D{0,30}([€$£]?\s?\d[\d,. ]*\s?(?:million|m|billion|bn|k)?)", text)
