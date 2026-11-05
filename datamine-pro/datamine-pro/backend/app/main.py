@@ -408,7 +408,7 @@ async def _run_annuaire_directory(
                 except (ValueError, httpx.HTTPError):
                     pass
             collected.append(record)
-        job.update(
+        jobs[job_id].update(
             progress=min(88, 12 + int(76 * page / max(1, min(total_pages, MAX_DIRECTORY_PAGES)))),
             recordsFound=len(collected),
             message=f"Searching official French company directory: page {page} of {min(total_pages, MAX_DIRECTORY_PAGES)}",
