@@ -1,4 +1,4 @@
-export type Country = "France" | "Belgium" | "Luxembourg";
+export type Country = "France" | "Belgium" | "Luxembourg" | "Other";
 export type VerificationStatus = "Verified" | "Partially verified" | "Unverified";
 
 /** "sample" = built-in demonstration record. "extracted" = real data from the future Python backend. */
