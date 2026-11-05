@@ -139,7 +139,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<AppContextValue>(
     () => ({
-      companies: extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES,
+      companies: isBackendConfigured() ? extractedCompanies : (extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES),
       projects,
       addProject,
       addCompanies,
