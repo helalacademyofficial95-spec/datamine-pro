@@ -31,7 +31,7 @@ export function ProjectsView() {
     <>
       <PageHeader
         title="My Projects"
-        description="Every extraction you configure appears here. In this version, projects are simulated demo runs."
+        description="Track your extraction jobs and review the number of company records returned."
         actions={
           <Link href="/new-extraction" className="btn-primary">
             <PlusCircle className="h-4 w-4" aria-hidden /> New Extraction
@@ -66,7 +66,7 @@ export function ProjectsView() {
                 <ProjectStatusBadge status={p.status} />
               </div>
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                {p.origin === "sample" ? <SampleBadge /> : <Badge tone="brand">Demo run · simulated</Badge>}
+                {p.origin === "sample" ? <SampleBadge /> : p.origin === "extracted" ? <Badge tone="ok">Live extraction</Badge> : <Badge tone="brand">Demo run · simulated</Badge>}
                 <span className="text-xs text-muted">{p.country}</span>
               </div>
               <ul className="mb-4 space-y-1 text-xs text-muted">
