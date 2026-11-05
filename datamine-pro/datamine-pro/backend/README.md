@@ -2,6 +2,9 @@
 
 This FastAPI service supports public, permitted company-page extraction and a dedicated connector for the French Annuaire des Entreprises search page.
 
+## Deployment
+
+The Render web service is connected to the `feature/python-extraction-backend` branch with automatic deploys enabled. Changes pushed to this branch should trigger a backend deployment.
 ## Run locally
 
 From this `backend` directory:
