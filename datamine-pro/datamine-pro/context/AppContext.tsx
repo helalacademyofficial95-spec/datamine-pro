@@ -121,11 +121,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setFilters(DEFAULT_FILTERS);
   }, []);
 
-  const projects = useMemo(() => [...userProjects, ...SAMPLE_PROJECTS], [userProjects]);
+  const projects = useMemo(() => (userProjects.length > 0 ? userProjects : SAMPLE_PROJECTS), [userProjects]);
 
   const value = useMemo<AppContextValue>(
     () => ({
-      companies: [...extractedCompanies, ...SAMPLE_COMPANIES],
+      companies: extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES,
       projects,
       addProject,
       addCompanies,
