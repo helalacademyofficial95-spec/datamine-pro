@@ -23,10 +23,10 @@ export function NewExtractionView() {
   const [urlError, setUrlError] = useState<string | null>(null);
   const [sources, setSources] = useState<string[]>([]);
   const [country, setCountry] = useState<CountryOption>("France");
-  const [employees, setEmployees] = useState<string>("20-49");
+  const [employees, setEmployees] = useState<string>("all");
   const [empMin, setEmpMin] = useState("");
   const [empMax, setEmpMax] = useState("");
-  const [turnover, setTurnover] = useState<string>("above1m");
+  const [turnover, setTurnover] = useState<string>("all");
   const [turnMin, setTurnMin] = useState("");
   const [turnMax, setTurnMax] = useState("");
   const [fields, setFields] = useState<string[]>([...FIELD_OPTIONS]);
@@ -251,6 +251,7 @@ export function NewExtractionView() {
 
             <p className="label">Employee range</p>
             <div className="mb-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Employee range">
+              <label className={`chip ${employees === "all" ? "chip-active" : ""}`}><input type="radio" name="employees" className="sr-only" checked={employees === "all"} onChange={() => setEmployees("all")} />Any</label>
               {EMPLOYEE_OPTIONS.map((o) => (
                 <label key={o.id} className={`chip ${employees === o.id ? "chip-active" : ""}`}>
                   <input type="radio" name="employees" className="sr-only" checked={employees === o.id} onChange={() => setEmployees(o.id)} />
@@ -268,6 +269,7 @@ export function NewExtractionView() {
 
             <p className="label mt-6">Annual turnover</p>
             <div className="mb-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Annual turnover">
+              <label className={`chip ${turnover === "all" ? "chip-active" : ""}`}><input type="radio" name="turnover" className="sr-only" checked={turnover === "all"} onChange={() => setTurnover("all")} />Any</label>
               {TURNOVER_OPTIONS.map((o) => (
                 <label key={o.id} className={`chip ${turnover === o.id ? "chip-active" : ""}`}>
                   <input type="radio" name="turnover" className="sr-only" checked={turnover === o.id} onChange={() => setTurnover(o.id)} />
