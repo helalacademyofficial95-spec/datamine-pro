@@ -1,4 +1,4 @@
-import type { ExtractionJob, ExtractionRequest, JobResults } from "./types";
+import type { Company, ExtractionJob, ExtractionRequest, JobResults } from "./types";
 
 /**
  * Tiny API client for the future Python backend.
@@ -28,4 +28,5 @@ export const api = {
   getJob: (id: string) => request<ExtractionJob>(`/jobs/${encodeURIComponent(id)}`),
   cancelJob: (id: string) => request<ExtractionJob>(`/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   getResults: (id: string) => request<JobResults>(`/jobs/${encodeURIComponent(id)}/results`),
+  getCompanies: () => request<{ companies: Company[]; count: number }>("/companies"),
 };

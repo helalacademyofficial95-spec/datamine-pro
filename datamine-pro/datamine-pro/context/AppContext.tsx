@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { Company, ExportLogEntry, Project } from "@/lib/types";
 import { SAMPLE_COMPANIES, SAMPLE_PROJECTS } from "@/lib/sampleData";
 import { CompanyFilters, DEFAULT_FILTERS } from "@/lib/filters";
+import { api, isBackendConfigured } from "@/lib/api/client";
 
 /** A named set of filters the user saved on the Data Filters page. */
 export interface FilterPreset {
@@ -13,10 +14,11 @@ export interface FilterPreset {
 }
 
 interface AppContextValue {
-  /** All company records currently available. In v1 these are all SAMPLE records. */
+  /** Built-in sample records plus real records returned by the extraction backend. */
   companies: Company[];
   projects: Project[];
   addProject: (p: Project) => void;
+  addCompanies: (companies: Company[]) => void;
   deleteProject: (id: string) => void;
   exportLog: ExportLogEntry[];
   addExportLog: (e: ExportLogEntry) => void;
@@ -38,6 +40,7 @@ const KEYS = {
   projects: "datamine-user-projects",
   exports: "datamine-export-log",
   presets: "datamine-filter-presets",
+  extracted: "datamine-extracted-companies",
 } as const;
 
 function load<T>(key: string, fallback: T): T {
@@ -57,8 +60,39 @@ function save(key: string, value: unknown) {
   }
 }
 
+function mergeCompanyRecords(records: Company[]): Company[] {
+  const merged = new Map<string, Company>();
+  for (const company of records) {
+    const key = company.siren ? `${company.country}:${company.siren}` : company.id;
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, company);
+      continue;
+    }
+    merged.set(key, {
+      ...previous,
+      ...company,
+      director: company.director || previous.director,
+      email: company.email || previous.email,
+      phone: company.phone || previous.phone,
+      employees: company.employees || previous.employees,
+      employeeBand: company.employeeBand || previous.employeeBand,
+      turnover: company.turnover || previous.turnover,
+      turnoverYear: company.turnoverYear || previous.turnoverYear,
+      address: company.address || previous.address,
+      website: company.website || previous.website,
+      b2cWebsite: company.b2cWebsite || previous.b2cWebsite,
+      b2cWebsiteStatus: company.b2cWebsite || previous.b2cWebsite
+        ? "found"
+        : company.b2cWebsiteStatus || previous.b2cWebsiteStatus,
+    });
+  }
+  return Array.from(merged.values());
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [userProjects, setUserProjects] = useState<Project[]>([]);
+  const [extractedCompanies, setExtractedCompanies] = useState<Company[]>([]);
   const [exportLog, setExportLog] = useState<ExportLogEntry[]>([]);
   const [presets, setPresets] = useState<FilterPreset[]>([]);
   const [filters, setFilters] = useState<CompanyFilters>(DEFAULT_FILTERS);
@@ -71,7 +105,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUserProjects(load<Project[]>(KEYS.projects, []));
     setExportLog(load<ExportLogEntry[]>(KEYS.exports, []));
     setPresets(load<FilterPreset[]>(KEYS.presets, []));
+    setExtractedCompanies(mergeCompanyRecords(load<Company[]>(KEYS.extracted, [])));
     setLoaded(true);
+    if (isBackendConfigured()) {
+      api.getCompanies().then(({ companies }) => {
+        if (companies.length) {
+          setExtractedCompanies((current) => {
+            return mergeCompanyRecords([...current, ...companies]);
+          });
+        }
+      }).catch(() => {
+        // Keep locally saved records available if the backend cannot be reached.
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -83,6 +129,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loaded) save(KEYS.presets, presets);
   }, [presets, loaded]);
+  useEffect(() => {
+    if (loaded) save(KEYS.extracted, extractedCompanies);
+  }, [extractedCompanies, loaded]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -91,6 +140,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const addProject = useCallback((p: Project) => setUserProjects((prev) => [p, ...prev]), []);
+  const addCompanies = useCallback((records: Company[]) => setExtractedCompanies((prev) => mergeCompanyRecords([...records, ...prev])), []);
   const deleteProject = useCallback((id: string) => setUserProjects((prev) => prev.filter((p) => p.id !== id)), []);
   const addExportLog = useCallback((e: ExportLogEntry) => setExportLog((prev) => [e, ...prev].slice(0, 100)), []);
   const clearExportLog = useCallback(() => setExportLog([]), []);
@@ -113,13 +163,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setFilters(DEFAULT_FILTERS);
   }, []);
 
-  const projects = useMemo(() => [...userProjects, ...SAMPLE_PROJECTS], [userProjects]);
+  const projects = useMemo(() => (userProjects.length > 0 ? userProjects : SAMPLE_PROJECTS), [userProjects]);
 
   const value = useMemo<AppContextValue>(
     () => ({
-      companies: SAMPLE_COMPANIES,
+      companies: isBackendConfigured() ? extractedCompanies : (extractedCompanies.length > 0 ? extractedCompanies : SAMPLE_COMPANIES),
       projects,
       addProject,
+      addCompanies,
       deleteProject,
       exportLog,
       addExportLog,
@@ -135,7 +186,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast,
     }),
     [
-      projects, addProject, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
+      extractedCompanies, projects, addProject, addCompanies, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
       presets, savePreset, deletePreset, resetDemoData, toast, showToast,
     ]
   );

@@ -34,6 +34,7 @@ const SUFFIX: Record<Country, string[]> = {
   France: ["SAS", "SARL", "SA"],
   Belgium: ["SRL", "SA", "BV"],
   Luxembourg: ["S.à r.l.", "SA"],
+  Other: ["Ltd", "LLC", "Inc."],
 };
 const FIRST = [
   "Camille", "Julien", "Élodie", "Thomas", "Sophie", "Nicolas", "Claire", "Antoine", "Margaux", "Lucas",
@@ -55,9 +56,10 @@ const PLACES: Record<Country, { city: string; zip: string }[]> = {
   Luxembourg: [
     { city: "Luxembourg", zip: "L-1219" }, { city: "Esch-sur-Alzette", zip: "L-4010" }, { city: "Differdange", zip: "L-4501" },
   ],
+  Other: [{ city: "Other", zip: "00000" }],
 };
 const STREETS = ["rue de la Gare", "avenue des Arts", "rue du Commerce", "boulevard Voltaire", "rue des Tanneurs", "place du Marché", "rue Pasteur", "chemin du Moulin"];
-const PHONE_PREFIX: Record<Country, string> = { France: "+33 1 99 00", Belgium: "+32 2 555", Luxembourg: "+352 27 99" };
+const PHONE_PREFIX: Record<Country, string> = { France: "+33 1 99 00", Belgium: "+32 2 555", Luxembourg: "+352 27 99", Other: "+1 555 010" };
 
 const slug = (s: string) =>
   s

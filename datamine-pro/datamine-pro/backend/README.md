@@ -1,49 +1,66 @@
-# Backend (future) — not built yet
+# DataMine Pro Python API
 
-This folder is intentionally empty of code. The frontend in the parent folder runs completely on its own,
-using sample data. When you are ready, build a **separate** Python service here and connect it.
+This FastAPI service supports public, permitted company-page extraction and a dedicated connector for the French Annuaire des Entreprises search page.
 
-## Planned stack (all free / open source)
+## Deployment
 
-- Python 3.11+
-- FastAPI (HTTP API) + Uvicorn
-- Scrapy and/or Playwright (fetching pages), BeautifulSoup (parsing)
-- Pandas (cleaning / de-duplication), OpenPyXL (Excel files on the server if needed)
+The Render web service is connected to the `feature/python-extraction-backend` branch with automatic deploys enabled. Changes pushed to this branch should trigger a backend deployment.
 
-Suggested layout:
+## Run locally
 
-```
-backend/
-  app/
-    main.py            # FastAPI app and routes
-    jobs.py            # job queue / status
-    spiders/           # Scrapy spiders, one per source type
-    enrich/            # B2C website matching, e-mail / phone verification
-    models.py          # Pydantic models matching frontend/lib/types.ts
-  requirements.txt
-  README.md
+From this `backend` directory:
+
+```bash
+python -m venv .venv
+# Windows: .venv\\Scripts\\activate
+# macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-## API the frontend already expects
+Check `http://localhost:8000/health` and API docs at `http://localhost:8000/docs`.
 
-The typed client lives in `lib/api/client.ts` and the request/response shapes in `lib/api/types.ts`.
-Set `NEXT_PUBLIC_API_URL` (see `.env.example`) to the backend address, e.g. `http://localhost:8000`.
+## Environment
 
-| Method | Path                  | Purpose                                      |
-| ------ | --------------------- | -------------------------------------------- |
-| GET    | `/health`             | `{ "status": "ok" }`                         |
-| POST   | `/jobs`               | Create an extraction job (`ExtractionRequest`) → `ExtractionJob` |
-| GET    | `/jobs/{id}`          | Job state and progress                        |
-| POST   | `/jobs/{id}/cancel`   | Cancel a running job                          |
-| GET    | `/jobs/{id}/results`  | `JobResults` with `companies[]`, each `origin: "extracted"` |
+- `FRONTEND_ORIGINS`: comma-separated allowed frontend origins.
+- `CRAWLER_USER_AGENT`: descriptive crawler identity. Replace the example contact before wider use.
 
-Remember to enable CORS for your frontend address in FastAPI.
+## API contract
 
-## Rules the backend must follow
+- `GET /health`
+- `POST /jobs` — accepts the frontend extraction request.
+- `GET /jobs/{id}` — job state and progress.
+- `POST /jobs/{id}/cancel` — request cancellation.
+- `GET /jobs/{id}/results` — returns `{ job, companies }`.
 
-- Read and obey each site's `robots.txt` and terms of use.
-- Rate-limit requests and identify your crawler honestly (User-Agent with contact info).
-- Never bypass CAPTCHAs, logins, paywalls or any access restriction.
-- Treat names, e-mails and phone numbers of people as personal data (GDPR): collect only what you need,
-  have a lawful basis, and delete data you no longer need.
-- Real records must be returned with `origin: "extracted"` so the UI never confuses them with sample data.
+## French Annuaire des Entreprises connector
+
+When the submitted source is `https://annuaire-entreprises.data.gouv.fr/rechercher`, the service uses the official open Recherche d'Entreprises API that powers the directory search, rather than attempting to scrape the search page's HTML.
+
+- API: `https://recherche-entreprises.api.gouv.fr/search`
+- Supports France only.
+- Uses the selected employee band and annual turnover minimum/maximum filters.
+- Requests active legal units and includes public registered-office, director, finance, and company-complement fields.
+- Fetches up to 10 pages × 25 records (maximum 250 records per run) to keep free-service jobs bounded.
+- Observes the API's published rate limit with a delay between page requests and handles HTTP 429 without retry storms.
+- When an official company website is supplied in the API result, the service checks its robots.txt before fetching it. Public email/phone details and a B2C storefront link are added only when visibly present on that permitted website.
+- B2C website is never guessed. If no explicit storefront link is found, the field remains blank.
+
+The official API does not expose every field shown on the directory website. Employee headcount is provided in bands, not as an exact count; this connector leaves the exact numeric employee field at zero (unknown) rather than fabricating a number. Turnover can also be absent. Director names are only included when supplied by the public API. Email and phone are not independently verified.
+
+Official API documentation: https://recherche-entreprises.api.gouv.fr/docs/
+
+## Other public website URLs
+
+Other submitted URLs are still treated as individual company pages, not as directory discovery sources. The service extracts visible metadata, email addresses, phone links, address markup, and explicit shop/store links from each permitted page.
+
+## Important limitations and safeguards
+
+- The French connector is currently the only supported directory adapter.
+- Jobs and results are held in process memory and disappear if the Render service restarts.
+- Each job accepts at most 10 source URLs.
+- The service refuses local/private network targets and does not bypass logins, CAPTCHAs, paywalls, or access restrictions.
+- Website enrichment is skipped if robots.txt cannot be checked or disallows the crawler.
+- The French public API excludes non-diffusible businesses and may not expose all information available on the directory website.
+- Review extracted records before use. Missing values remain blank/unknown; email and phone are not verified.
+- Use only information you are authorized to process and follow the source's terms and applicable privacy requirements.

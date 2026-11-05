@@ -1,4 +1,4 @@
-export type Country = "France" | "Belgium" | "Luxembourg";
+export type Country = "France" | "Belgium" | "Luxembourg" | "Other";
 export type VerificationStatus = "Verified" | "Partially verified" | "Unverified";
 
 /** "sample" = built-in demonstration record. "extracted" = real data from the future Python backend. */
@@ -7,6 +7,20 @@ export type DataOrigin = "sample" | "extracted";
 export interface Company {
   id: string;
   name: string;
+  siren?: string;
+  siret?: string;
+  nafCode?: string;
+  nafLabel?: string;
+  legalForm?: string;
+  legalStatus?: string;
+  employeeBand?: string;
+  turnoverYear?: number;
+  registryUrl?: string;
+  sourceName?: string;
+  sourceUrl?: string;
+  sourceType?: string;
+  sourceRecordId?: string;
+  b2cWebsiteStatus?: string;
   director: string;
   email: string;
   phone: string;
@@ -37,7 +51,7 @@ export interface Project {
   progress: number; // 0-100
   recordsFound: number;
   createdAt: string; // ISO date
-  origin: "sample" | "demo-run";
+  origin: "sample" | "demo-run" | "extracted";
 }
 
 export type ExportFormat = "CSV" | "Excel";

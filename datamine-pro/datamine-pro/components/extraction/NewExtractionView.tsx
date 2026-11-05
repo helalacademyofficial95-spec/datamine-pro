@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Circle, Loader2, Play, Plus, ShieldCheck, X, FlaskConical } from "lucide-react";
+import { useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, Circle, Loader2, Play, Plus, ShieldCheck, X } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -10,23 +10,23 @@ import {
   COUNTRY_OPTIONS, CountryOption, EMPLOYEE_OPTIONS, FIELD_OPTIONS, MAX_SOURCES, SIMULATION_STEPS, TURNOVER_OPTIONS, validateUrl,
 } from "@/lib/extraction";
 import { parseNumber } from "@/lib/filters";
-import { isBackendConfigured } from "@/lib/api/client";
+import { api, isBackendConfigured } from "@/lib/api/client";
 import { prettyUrl } from "@/lib/format";
 
-type RunState = "idle" | "running" | "done";
+type RunState = "idle" | "running" | "done" | "failed" | "cancelled";
 
 export function NewExtractionView() {
-  const { addProject, showToast } = useApp();
+  const { addProject, addCompanies, showToast } = useApp();
 
   const [projectName, setProjectName] = useState("");
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState<string | null>(null);
   const [sources, setSources] = useState<string[]>([]);
   const [country, setCountry] = useState<CountryOption>("France");
-  const [employees, setEmployees] = useState<string>("20-49");
+  const [employees, setEmployees] = useState<string>("all");
   const [empMin, setEmpMin] = useState("");
   const [empMax, setEmpMax] = useState("");
-  const [turnover, setTurnover] = useState<string>("above1m");
+  const [turnover, setTurnover] = useState<string>("all");
   const [turnMin, setTurnMin] = useState("");
   const [turnMax, setTurnMax] = useState("");
   const [fields, setFields] = useState<string[]>([...FIELD_OPTIONS]);
@@ -34,11 +34,11 @@ export function NewExtractionView() {
 
   const [runState, setRunState] = useState<RunState>("idle");
   const [stepIndex, setStepIndex] = useState(0);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [progressValue, setProgressValue] = useState(0);
+  const [jobMessage, setJobMessage] = useState("");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const finishedName = useRef("");
-
-  // Stop the simulated run if the user leaves the page
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
   function addUrl() {
     const result = validateUrl(urlInput);
@@ -66,71 +66,126 @@ export function NewExtractionView() {
   if (fields.length === 0) problems.push("Select at least one data field");
   if (empRangeError || turnRangeError) problems.push("Fix the custom range");
   if (!confirmed) problems.push("Confirm the compliance statement");
-  const canStart = problems.length === 0 && runState === "idle";
+  const canStart = problems.length === 0 && runState === "idle" && isBackendConfigured();
 
-  function startDemoRun() {
+  async function startExtraction() {
     if (!canStart) return;
-    // To connect the real backend later, call `api.createJob(...)` from lib/api/client.ts here
-    // instead of the simulation below. See backend/README.md.
-    finishedName.current = projectName.trim() || `Demo extraction ${prettyUrl(sources[0])}`;
+    finishedName.current = projectName.trim() || `Extraction ${prettyUrl(sources[0])}`;
     setRunState("running");
+    setProgressValue(0);
     setStepIndex(0);
-    let i = 0;
-    timer.current = setInterval(() => {
-      i += 1;
-      if (i >= SIMULATION_STEPS.length) {
-        if (timer.current) clearInterval(timer.current);
-        addProject({
-          id: `proj-demo-${Date.now()}`,
-          name: finishedName.current,
-          sources,
-          country,
-          status: "Completed",
-          progress: 100,
-          recordsFound: 0,
-          createdAt: new Date().toISOString().slice(0, 10),
-          origin: "demo-run",
-        });
-        setStepIndex(SIMULATION_STEPS.length);
-        setRunState("done");
-        showToast("Demo run finished. No real data was collected.");
-      } else {
-        setStepIndex(i);
+    setRunError(null);
+    setJobMessage("Submitting extraction job...");
+
+    const employeeOption = EMPLOYEE_OPTIONS.find((option) => option.id === employees);
+    const turnoverOption = TURNOVER_OPTIONS.find((option) => option.id === turnover);
+    const employeeRange = employees === "custom"
+      ? { min: parseNumber(empMin), max: parseNumber(empMax) }
+      : { min: employeeOption?.min ?? null, max: employeeOption?.max ?? null };
+    const turnoverRange = turnover === "custom"
+      ? { min: parseNumber(turnMin), max: parseNumber(turnMax) }
+      : { min: turnoverOption?.min ?? null, max: turnoverOption?.max ?? null };
+
+    try {
+      const created = await api.createJob({
+        projectName: finishedName.current,
+        sourceUrls: sources,
+        country,
+        employeeRange,
+        turnoverRange,
+        fields,
+        complianceConfirmed: confirmed,
+      });
+      setJobId(created.id);
+      setJobMessage(created.message || "Job queued");
+
+      let current = created;
+      while (current.state === "queued" || current.state === "running") {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        current = await api.getJob(created.id);
+        setProgressValue(current.progress);
+        setJobMessage(current.message || "Processing source websites...");
+        setStepIndex(Math.min(
+          SIMULATION_STEPS.length,
+          Math.floor((current.progress / 100) * SIMULATION_STEPS.length),
+        ));
       }
-    }, 900);
+
+      if (current.state === "cancelled") {
+        setRunState("cancelled");
+        setJobMessage(current.message || "Extraction cancelled");
+        return;
+      }
+      if (current.state !== "completed") {
+        throw new Error(current.message || "The extraction job did not complete.");
+      }
+
+      const results = await api.getResults(created.id);
+      addCompanies(results.companies);
+      addProject({
+        id: `proj-${created.id}`,
+        name: finishedName.current,
+        sources,
+        country,
+        status: "Completed",
+        progress: 100,
+        recordsFound: results.companies.length,
+        createdAt: new Date().toISOString().slice(0, 10),
+        origin: "extracted",
+      });
+      setProgressValue(100);
+      setStepIndex(SIMULATION_STEPS.length);
+      setJobMessage(current.message || "Extraction completed");
+      setRunState("done");
+      showToast(`Extraction finished: ${results.companies.length} company records found.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to run extraction.";
+      setRunError(message);
+      setJobMessage("Extraction failed");
+      setRunState("failed");
+    }
   }
 
-  function cancelRun() {
-    if (timer.current) clearInterval(timer.current);
-    setRunState("idle");
-    setStepIndex(0);
+  async function cancelRun() {
+    if (jobId) {
+      try {
+        await api.cancelJob(jobId);
+      } catch {
+        // The job may already have finished or the service may be unavailable.
+      }
+    }
+    setRunState("cancelled");
+    setJobMessage("Cancellation requested");
   }
 
   function resetForm() {
     setRunState("idle");
     setStepIndex(0);
+    setProgressValue(0);
+    setJobId(null);
+    setJobMessage("");
+    setRunError(null);
     setSources([]);
     setProjectName("");
     setConfirmed(false);
   }
 
-  const progress = Math.round((Math.min(stepIndex, SIMULATION_STEPS.length) / SIMULATION_STEPS.length) * 100);
+  const progress = progressValue;
 
   return (
     <>
-      <PageHeader title="New Extraction" description="Describe which public company information you want to collect. In this version the run is a simulation." />
+      <PageHeader title="New Extraction" description="Submit public company websites to the connected Python extraction service." />
 
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-dashed border-warn/50 bg-warn/10 px-4 py-3 text-sm">
-        <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
         <p>
-          <strong className="text-warn">Simulation only.</strong> Pressing “Start Extraction” walks through the workflow so you can see how it will look. It does{" "}
-          <strong>not</strong> contact any website and does <strong>not</strong> collect any data.{" "}
-          {isBackendConfigured() ? "A backend address is set, but real extraction is not implemented in this version." : "No backend is connected yet."}
+          <strong className="text-warn">Backend connection required.</strong>{" "}
+          {isBackendConfigured() ? "The extraction service is configured. Only public websites that permit automated access will be processed." : "The Python backend URL is not configured yet. Extraction is disabled until the service is deployed and connected."}
         </p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <form className="space-y-6 xl:col-span-2" onSubmit={(e) => { e.preventDefault(); startDemoRun(); }} noValidate>
+        <form className="space-y-6 xl:col-span-2" onSubmit={(e) => { e.preventDefault(); startExtraction(); }} noValidate>
           {/* Source websites */}
           <fieldset className="card p-5" disabled={runState !== "idle"}>
             <legend className="sr-only">Source websites</legend>
@@ -196,6 +251,7 @@ export function NewExtractionView() {
 
             <p className="label">Employee range</p>
             <div className="mb-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Employee range">
+              <label className={`chip ${employees === "all" ? "chip-active" : ""}`}><input type="radio" name="employees" className="sr-only" checked={employees === "all"} onChange={() => setEmployees("all")} />Any</label>
               {EMPLOYEE_OPTIONS.map((o) => (
                 <label key={o.id} className={`chip ${employees === o.id ? "chip-active" : ""}`}>
                   <input type="radio" name="employees" className="sr-only" checked={employees === o.id} onChange={() => setEmployees(o.id)} />
@@ -213,6 +269,7 @@ export function NewExtractionView() {
 
             <p className="label mt-6">Annual turnover</p>
             <div className="mb-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Annual turnover">
+              <label className={`chip ${turnover === "all" ? "chip-active" : ""}`}><input type="radio" name="turnover" className="sr-only" checked={turnover === "all"} onChange={() => setTurnover("all")} />Any</label>
               {TURNOVER_OPTIONS.map((o) => (
                 <label key={o.id} className={`chip ${turnover === o.id ? "chip-active" : ""}`}>
                   <input type="radio" name="turnover" className="sr-only" checked={turnover === o.id} onChange={() => setTurnover(o.id)} />
@@ -263,7 +320,7 @@ export function NewExtractionView() {
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted" aria-live="polite">{problems.length > 0 && runState === "idle" ? `To continue: ${problems.join(" · ")}` : ""}</p>
               <button type="submit" className="btn-primary" disabled={!canStart}>
-                <Play className="h-4 w-4" aria-hidden /> Start Extraction (demo)
+                <Play className="h-4 w-4" aria-hidden /> Start Extraction
               </button>
             </div>
           </div>
@@ -274,12 +331,12 @@ export function NewExtractionView() {
           <div className="card p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold">Workflow</h2>
-              <Badge tone="warn">Simulation</Badge>
+              <Badge tone={runState === "failed" ? "bad" : runState === "done" ? "ok" : "brand"}>{runState === "running" ? "Running" : runState === "done" ? "Completed" : runState === "failed" ? "Failed" : runState === "cancelled" ? "Cancelled" : "Ready"}</Badge>
             </div>
 
             {runState === "idle" && (
               <p className="text-sm text-muted">
-                When you start, these steps run as an animation. Real extraction will be added when the Python backend is connected.
+                {isBackendConfigured() ? "Start a job to collect permitted public company information from the source websites." : "The backend must be deployed and its URL configured before extraction can start."}
               </p>
             )}
 
@@ -299,21 +356,25 @@ export function NewExtractionView() {
             {runState !== "idle" && (
               <div className="mt-5">
                 <div className="mb-1.5 flex justify-between text-xs text-muted"><span>Progress</span><span>{progress}%</span></div>
-                <div className="h-2 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Simulation progress">
+                <div className="h-2 overflow-hidden rounded-full bg-line" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} aria-label="Extraction progress">
                   <div className="h-full rounded-full bg-gradient-to-r from-brand to-accent transition-all duration-500" style={{ width: `${progress}%` }} />
                 </div>
               </div>
             )}
 
             {runState === "running" && (
-              <button className="btn-secondary mt-5 w-full" onClick={cancelRun}>Cancel simulation</button>
+              <button className="btn-secondary mt-5 w-full" onClick={cancelRun}>Cancel extraction</button>
             )}
 
+            {jobMessage && runState !== "idle" && <p className="mt-3 text-xs text-muted" aria-live="polite">{jobMessage}</p>}
+            {runError && <p role="alert" className="mt-3 text-sm text-bad">{runError}</p>}
+            {runState === "failed" && <button className="btn-secondary mt-4 w-full" onClick={resetForm}>Try again</button>}
+            {runState === "cancelled" && <button className="btn-secondary mt-4 w-full" onClick={resetForm}>Configure another</button>}
             {runState === "done" && (
               <div className="mt-5 rounded-xl border border-line bg-raised p-4 text-sm">
-                <p className="font-semibold">Demo run finished</p>
+                <p className="font-semibold">Extraction completed</p>
                 <p className="mt-1 text-muted">
-                  A demo project was added to My Projects with <strong>0 records</strong>, because nothing was actually extracted. The Extracted Companies page still shows sample data only.
+                  The extracted records have been added to the companies list. Review each field before using the data; B2C website matches may be empty when no clear storefront link was found.
                 </p>
                 <div className="mt-4 flex flex-col gap-2">
                   <Link href="/projects" className="btn-primary">Open My Projects</Link>

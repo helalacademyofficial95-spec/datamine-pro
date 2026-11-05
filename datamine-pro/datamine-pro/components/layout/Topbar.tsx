@@ -3,6 +3,7 @@
 import { Menu, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/context/ThemeContext";
 import { SampleBadge } from "@/components/ui/Badge";
+import { isBackendConfigured } from "@/lib/api/client";
 
 export function Topbar({ onMenu }: { onMenu: () => void }) {
   const { theme, toggleTheme } = useTheme();
@@ -14,7 +15,7 @@ export function Topbar({ onMenu }: { onMenu: () => void }) {
         <Menu className="h-5 w-5" />
       </button>
       <div className="flex-1" />
-      <SampleBadge label="Demo · sample data" />
+      <SampleBadge label={isBackendConfigured() ? "Backend configured" : "Demo · sample data"} />
       <button
         onClick={toggleTheme}
         className="btn-secondary h-10 w-10 !p-0"
