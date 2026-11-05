@@ -345,7 +345,7 @@ async def _run_annuaire_directory(
         "per_page": DIRECTORY_PAGE_SIZE,
         "etat_administratif": "A",
         "minimal": "true",
-        "include": "siege,dirigeants,finances",
+        "include": "siege,dirigeants,finances,complements",
     }
     codes = _employee_codes(request.employeeRange)
     if codes:
