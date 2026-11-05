@@ -13,7 +13,7 @@ export interface FilterPreset {
 }
 
 interface AppContextValue {
-  /** All company records currently available. In v1 these are all SAMPLE records. */
+  /** Built-in sample records plus real records returned by the extraction backend. */
   companies: Company[];
   projects: Project[];
   addProject: (p: Project) => void;
@@ -39,6 +39,7 @@ const KEYS = {
   projects: "datamine-user-projects",
   exports: "datamine-export-log",
   presets: "datamine-filter-presets",
+  extracted: "datamine-extracted-companies",
 } as const;
 
 function load<T>(key: string, fallback: T): T {
@@ -73,6 +74,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setUserProjects(load<Project[]>(KEYS.projects, []));
     setExportLog(load<ExportLogEntry[]>(KEYS.exports, []));
     setPresets(load<FilterPreset[]>(KEYS.presets, []));
+    setExtractedCompanies(load<Company[]>(KEYS.extracted, []));
     setLoaded(true);
   }, []);
 
@@ -139,7 +141,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       showToast,
     }),
     [
-      projects, addProject, addCompanies, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
+      extractedCompanies, projects, addProject, addCompanies, deleteProject, exportLog, addExportLog, clearExportLog, filters, resetFilters,
       presets, savePreset, deletePreset, resetDemoData, toast, showToast,
     ]
   );
