@@ -14,6 +14,7 @@ import { formatNumber } from "@/lib/format";
 
 export function DashboardView() {
   const { companies, projects } = useApp();
+  const isDemoData = companies.length === 0 || companies.every((company) => company.origin === "sample");
 
   const stats = useMemo(() => {
     const total = companies.length;
@@ -45,10 +46,10 @@ export function DashboardView() {
           </Link>
         }
       />
-      <DemoNotice />
+      {isDemoData && <DemoNotice />}
 
       <section aria-label="Key statistics" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <StatCard label="Total Companies" value={formatNumber(stats.total)} hint="Sample records" icon={Building2} />
+        <StatCard label="Total Companies" value={formatNumber(stats.total)} hint={isDemoData ? "Sample records" : "Company records"} icon={Building2} />
         <StatCard label="Successfully Extracted" value={formatNumber(stats.complete)} hint={pct(stats.complete)} icon={CheckCircle2} />
         <StatCard label="Verified Emails" value={formatNumber(stats.emails)} hint={pct(stats.emails)} icon={MailCheck} />
         <StatCard label="Verified Phone Numbers" value={formatNumber(stats.phones)} hint={pct(stats.phones)} icon={PhoneCall} />
