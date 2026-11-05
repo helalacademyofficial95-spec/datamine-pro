@@ -241,7 +241,41 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                     html = await _get_page(client, source_url)
                     if not html:
                         continue
-                    companies.append(_extract_record(html, source_url, request.country, source_index))
+                    record = _extract_record(html, source_url, request.country, source_index)
+
+                    # Apply numeric filters only when a source actually exposes a value.
+                    # Zero represents unknown in the current frontend data model.
+                    employee_count = record["employees"]
+                    if employee_count > 0:
+                        if request.employeeRange.min is not None and employee_count < request.employeeRange.min:
+                            continue
+                        if request.employeeRange.max is not None and employee_count > request.employeeRange.max:
+                            continue
+
+                    turnover_value = record["turnover"]
+                    if turnover_value > 0:
+                        if request.turnoverRange.min is not None and turnover_value < request.turnoverRange.min:
+                            continue
+                        if request.turnoverRange.max is not None and turnover_value > request.turnoverRange.max:
+                            continue
+
+                    # Keep the Company Name as the required record identifier. Other
+                    # optional fields are blanked when the user did not request them.
+                    requested = set(request.fields)
+                    field_map = {
+                        "Director Name": "director",
+                        "Email Address": "email",
+                        "Phone Number": "phone",
+                        "Number of Employees": "employees",
+                        "Annual Turnover": "turnover",
+                        "Company Address": "address",
+                        "Company Website": "website",
+                        "B2C Website": "b2cWebsite",
+                    }
+                    for label, key in field_map.items():
+                        if label not in requested:
+                            record[key] = None if key == "b2cWebsite" else (0 if key in {"employees", "turnover"} else "")
+                    companies.append(record)
                     job.update(
                         progress=min(90, 10 + int(80 * (source_index + 1) / len(request.sourceUrls))),
                         recordsFound=len(companies),
