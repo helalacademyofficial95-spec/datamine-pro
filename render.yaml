@@ -9,6 +9,6 @@ services:
     healthCheckPath: /health
     envVars:
       - key: FRONTEND_ORIGINS
-        value: https://datamine-pro.vercel.app,http://localhost:3000
+        value: https://datamine-pro.vercel.app,https://datamine-i9hoq875a-helalacademyofficial95-3918.vercel.app,http://localhost:3000
       - key: CRAWLER_USER_AGENT
         sync: false
