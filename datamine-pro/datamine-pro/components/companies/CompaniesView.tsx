@@ -54,6 +54,7 @@ export function CompaniesView() {
   const pageAllSelected = pageRows.length > 0 && pageRows.every((c) => selectedIds.has(c.id));
   const pageSomeSelected = pageRows.some((c) => selectedIds.has(c.id));
   const activeFilters = countActiveFilters(filters);
+  const isDemoData = companies.length === 0 || companies.every((company) => company.origin === "sample");
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -87,7 +88,7 @@ export function CompaniesView() {
   return (
     <>
       <PageHeader title="Extracted Companies" description="Search, filter, sort and export company records." />
-      <DemoNotice />
+      {isDemoData && <DemoNotice />}
 
       <div className="card mb-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
