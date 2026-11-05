@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Circle, Loader2, Play, Plus, ShieldCheck, X, FlaskConical } from "lucide-react";
+import { useRef, useState } from "react";
+import { AlertCircle, CheckCircle2, Circle, Loader2, Play, Plus, ShieldCheck, X } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -38,11 +38,7 @@ export function NewExtractionView() {
   const [jobMessage, setJobMessage] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const finishedName = useRef("");
-
-  // Stop polling locally if the user leaves the page
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
 
   function addUrl() {
     const result = validateUrl(urlInput);
@@ -181,11 +177,10 @@ export function NewExtractionView() {
       <PageHeader title="New Extraction" description="Submit public company websites to the connected Python extraction service." />
 
       <div className="mb-6 flex items-start gap-3 rounded-xl border border-dashed border-warn/50 bg-warn/10 px-4 py-3 text-sm">
-        <FlaskConical className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
+        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden />
         <p>
-          <strong className="text-warn">Simulation only.</strong> Pressing “Start Extraction” walks through the workflow so you can see how it will look. It does{" "}
-          <strong>not</strong> contact any website and does <strong>not</strong> collect any data.{" "}
-          {isBackendConfigured() ? "A backend address is set, but real extraction is not implemented in this version." : "No backend is connected yet."}
+          <strong className="text-warn">Backend connection required.</strong>{" "}
+          {isBackendConfigured() ? "The extraction service is configured. Only public websites that permit automated access will be processed." : "The Python backend URL is not configured yet. Extraction is disabled until the service is deployed and connected."}
         </p>
       </div>
 
@@ -334,7 +329,7 @@ export function NewExtractionView() {
           <div className="card p-5">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold">Workflow</h2>
-              <Badge tone={runState === "failed" ? "danger" : runState === "done" ? "success" : "info"}>{runState === "running" ? "Running" : runState === "done" ? "Completed" : runState === "failed" ? "Failed" : runState === "cancelled" ? "Cancelled" : "Ready"}</Badge>
+              <Badge tone={runState === "failed" ? "bad" : runState === "done" ? "ok" : "brand"}>{runState === "running" ? "Running" : runState === "done" ? "Completed" : runState === "failed" ? "Failed" : runState === "cancelled" ? "Cancelled" : "Ready"}</Badge>
             </div>
 
             {runState === "idle" && (
