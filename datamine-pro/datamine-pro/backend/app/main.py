@@ -597,6 +597,19 @@ async def cancel_job(job_id: str) -> ExtractionJob:
     return ExtractionJob(**{key: job[key] for key in ("id", "state", "progress", "message", "recordsFound")})
 
 
+
+
+@app.get("/companies")
+async def list_extracted_companies() -> dict[str, Any]:
+    """Return completed extraction records still held by this service process."""
+    records: list[dict[str, Any]] = []
+    for job in jobs.values():
+        if job.get("state") == "completed":
+            records.extend(job.get("companies", []))
+    # Keep the newest completed job records first; callers deduplicate by record id.
+    records.sort(key=lambda item: str(item.get("extractedAt") or ""), reverse=True)
+    return {"companies": records, "count": len(records)}
+
 @app.get("/jobs/{job_id}/results")
 async def get_results(job_id: str) -> dict[str, Any]:
     job = jobs.get(job_id)
