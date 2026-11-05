@@ -273,8 +273,9 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                         "B2C Website": "b2cWebsite",
                     }
                     for label, key in field_map.items():
-                        if label not in requested:
-                            record[key] = None if key == "b2cWebsite" else (0 if key in {"employees", "turnover"} else "")
+                        # B2C Website is a required client deliverable, so retain it even if other optional fields are unchecked.
+                        if label not in requested and key != "b2cWebsite":
+                            record[key] = 0 if key in {"employees", "turnover"} else ""
                     companies.append(record)
                     job.update(
                         progress=min(90, 10 + int(80 * (source_index + 1) / len(request.sourceUrls))),
