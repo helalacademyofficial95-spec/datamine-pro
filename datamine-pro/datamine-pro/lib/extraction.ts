@@ -32,11 +32,11 @@ export const FIELD_OPTIONS = [
 
 export const SIMULATION_STEPS = [
   "Validating source URLs",
-  "Checking robots.txt rules (simulated)",
-  "Fetching pages (simulated)",
-  "Parsing company information (simulated)",
-  "Matching B2C websites (simulated)",
-  "Verifying e-mails and phone numbers (simulated)",
+  "Checking robots.txt rules",
+  "Fetching permitted public pages",
+  "Parsing company information",
+  "Matching publicly linked B2C websites",
+  "Reviewing available contact details",
 ] as const;
 
 export const MAX_SOURCES = 10;
