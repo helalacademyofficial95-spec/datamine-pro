@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Theme colours (RGB triplets so Tailwind can add opacity) ---------- */
+:root {
+  --canvas: 241 245 251;
+  --surface: 255 255 255;
+  --raised: 245 248 253;
+  --line: 218 226 240;
+  --ink: 15 23 42;
+  --muted: 92 107 133;
+  --brand: 37 99 235;
+  --accent: 8 145 178;
+  --ok: 21 128 61;
+  --warn: 180 83 9;
+  --bad: 185 28 28;
+  --sidebar: 9 16 36;
+  --shadow: 30 58 138;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: 6 11 26;
+  --surface: 12 20 42;
+  --raised: 17 28 56;
+  --line: 32 46 84;
+  --ink: 228 234 248;
+  --muted: 140 153 187;
+  --brand: 59 130 246;
+  --accent: 34 211 238;
+  --ok: 74 222 128;
+  --warn: 251 191 36;
+  --bad: 248 113 113;
+  --sidebar: 7 12 28;
+  --shadow: 0 0 0;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand/60 ring-offset-2 ring-offset-canvas;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: rgb(var(--brand));
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+  .field {
+    @apply w-full rounded-xl border border-line bg-raised px-3 py-2.5 text-sm text-ink placeholder:text-muted/70 transition focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/30;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white shadow-lg shadow-brand/25 hover:brightness-110 active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply btn border border-line bg-raised text-ink hover:border-brand/50 hover:bg-brand/10;
+  }
+  .btn-ghost {
+    @apply btn text-muted hover:bg-brand/10 hover:text-ink;
+  }
+  .chip {
+    @apply inline-flex cursor-pointer select-none items-center rounded-full border border-line bg-raised px-3.5 py-1.5 text-sm font-medium text-muted transition hover:border-brand/50 hover:text-ink;
+  }
+  .chip:focus-within {
+    @apply ring-2 ring-brand/60;
+  }
+  .chip-active {
+    @apply border-brand bg-brand/15 text-ink;
+  }
+}
+
+/* Thin, themed scrollbars for the data table */
+.thin-scroll::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
