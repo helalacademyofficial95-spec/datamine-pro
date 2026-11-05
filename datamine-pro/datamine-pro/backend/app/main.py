@@ -111,13 +111,24 @@ async def _robots_allows(client: httpx.AsyncClient, url: str) -> bool:
     parsed = urlparse(url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     try:
-        text = await _get_page(client, robots_url)
-        if text is None:
-            # A missing or inaccessible robots file is not treated as permission.
+        _public_http_url(robots_url)
+        host = parsed.hostname or ""
+        lock = _host_locks.setdefault(host, asyncio.Lock())
+        async with lock:
+            await asyncio.sleep(HOST_DELAY_SECONDS)
+            response = await client.get(
+                robots_url,
+                headers={"User-Agent": USER_AGENT},
+                follow_redirects=False,
+            )
+        if response.status_code == 404:
+            # A confirmed missing robots.txt means there are no published crawl rules.
+            return True
+        if response.status_code != 200:
             return False
         parser = RobotFileParser()
         parser.set_url(robots_url)
-        parser.parse(text.splitlines())
+        parser.parse(response.text.splitlines())
         return parser.can_fetch(USER_AGENT, url)
     except Exception:
         return False
@@ -198,7 +209,7 @@ def _extract_record(html: str, url: str, country: str, index: int) -> dict[str, 
         "phone": phones[0] if phones else "",
         "employees": employees,
         "turnover": turnover,
-        "country": country if country in {"France", "Belgium", "Luxembourg"} else "France",
+        "country": country,
         "address": address[:240],
         "website": url,
         "b2cWebsite": b2c,
