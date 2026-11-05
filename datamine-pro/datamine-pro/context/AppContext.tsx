@@ -87,6 +87,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (loaded) save(KEYS.presets, presets);
   }, [presets, loaded]);
+  useEffect(() => {
+    if (loaded) save(KEYS.extracted, extractedCompanies);
+  }, [extractedCompanies, loaded]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
