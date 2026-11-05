@@ -25,8 +25,16 @@ USER_AGENT = os.getenv(
 )
 MAX_PAGES_PER_SOURCE = 6
 MAX_DIRECTORY_PAGES = 3
-DIRECTORY_SEARCH_TERMS = ["commerce", "vente", "boutique", "magasin", "e-commerce", "vente en ligne"]
+# Broad French consumer-facing discovery terms. The official API is a search
+# API, not a complete SIRENE database export, so coverage remains partial.
+DIRECTORY_SEARCH_TERMS = [
+    "commerce", "vente", "boutique", "magasin", "e-commerce",
+    "vente en ligne", "restaurant", "hotel", "boulangerie",
+    "coiffeur", "beaute", "opticien", "fleuriste", "meubles",
+    "vetements", "automobile", "loisirs", "services aux particuliers",
+]
 DIRECTORY_PAGE_SIZE = 25
+MAX_WEBSITE_ENRICHMENTS = 75
 REQUEST_TIMEOUT = 20.0
 HOST_DELAY_SECONDS = 1.0
 DIRECTORY_API = "https://recherche-entreprises.api.gouv.fr/search"
@@ -298,28 +306,32 @@ def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
         seat.get("complement_adresse"), seat.get("code_postal"), seat.get("libelle_commune"),
     ]
     address = " ".join(str(part).strip() for part in address_parts if part)
-    leaders = item.get("dirigeants") if isinstance(item.get("dirigeants"), list) else []
-    director_names = []
-    for leader in leaders:
-        if not isinstance(leader, dict):
-            continue
-        full_name = " ".join(str(leader.get(key, "")).strip() for key in ("prenoms", "nom")).strip()
-        if full_name:
-            director_names.append(full_name)
-    website = ""
-    for container in (item, item.get("complements", {})):
-        if not isinstance(container, dict):
-            continue
-        candidate = container.get("site_web") or container.get("website")
-        if isinstance(candidate, str) and candidate.strip():
-            website = candidate.strip()
-            if not website.startswith(("http://", "https://")):
-                website = "https://" + website
-            break
+    naf_code = str(item.get("activite_principale") or item.get("activite_principale_unite_legale") or "")
+    siren = str(item.get("siren") or "")
+    siret = str(seat.get("siret") or "")
+    employee_band = str(item.get("tranche_effectif_salarie") or "")
+    legal_form = str(item.get("nature_juridique") or "")
+    legal_status = str(item.get("etat_administratif") or "")
+    finances = item.get("finances") if isinstance(item.get("finances"), dict) else {}
+    turnover_years = [int(match.group(1)) for key in finances if (match := re.search(r"(20\\d{2})", str(key)))]
+    turnover_year = max(turnover_years, default=0)
     return {
         "id": f"extracted-{uuid.uuid4().hex[:12]}",
         "name": str(name)[:180],
-        "director": ", ".join(director_names[:3]),
+        "siren": siren,
+        "siret": siret,
+        "nafCode": naf_code,
+        "nafLabel": str(item.get("libelle_activite_principale") or ""),
+        "legalForm": legal_form,
+        "legalStatus": legal_status,
+        "employeeBand": employee_band,
+        "turnoverYear": turnover_year,
+        "registryUrl": f"https://annuaire-entreprises.data.gouv.fr/entreprise/{siren}" if siren else "",
+        "sourceName": "Recherche d'entreprises (France)",
+        "sourceUrl": DIRECTORY_API,
+        "sourceType": "official_government_api",
+        "sourceRecordId": siren,
+        "director": "",
         "email": "",
         "phone": "",
         # The official API publishes employee bands, not an exact headcount.
@@ -350,7 +362,7 @@ async def _run_annuaire_directory(
         "per_page": DIRECTORY_PAGE_SIZE,
         "etat_administratif": "A",
         "minimal": "true",
-        "include": "siege,dirigeants,finances,complements",
+        "include": "siege,finances,complements",
     }
     codes = _employee_codes(request.employeeRange)
     if codes:
@@ -405,24 +417,33 @@ async def _run_annuaire_directory(
                 record = _directory_record(item, request.country)
                 if not record["name"]:
                     continue
-                # Enrich only when the official API itself supplies a company website.
-                # Respect that website's robots.txt and keep B2C blank unless an explicit
-                # storefront link is visible on that company website.
+                # Bound website checks so a directory job remains practical.
+                # Record B2C matches only when an explicit storefront link is found.
                 website = record["website"]
-                if website:
+                if website and websites_enriched < MAX_WEBSITE_ENRICHMENTS:
                     try:
                         if await _robots_allows(client, website):
                             html = await _get_page(client, website)
                             if html:
                                 storefront = _storefront_from_html(html, website)
                                 record["b2cWebsite"] = storefront
+                                record["b2cWebsiteStatus"] = "found" if storefront else "not_found_on_checked_homepage"
                                 page_record = _extract_record(html, website, request.country, len(collected))
                                 record["email"] = page_record["email"]
                                 record["phone"] = page_record["phone"]
                                 if not record["address"]:
                                     record["address"] = page_record["address"]
+                            else:
+                                record["b2cWebsiteStatus"] = "website_unavailable"
+                        else:
+                            record["b2cWebsiteStatus"] = "robots_disallowed_or_unavailable"
                     except (ValueError, httpx.HTTPError):
-                        pass
+                        record["b2cWebsiteStatus"] = "website_check_failed"
+                    websites_enriched += 1
+                elif website:
+                    record["b2cWebsiteStatus"] = "not_checked_enrichment_limit"
+                else:
+                    record["b2cWebsiteStatus"] = "no_official_website_in_registry"
                 collected.append(record)
             completed_requests += 1
             jobs[job_id].update(
@@ -438,15 +459,16 @@ async def _run_annuaire_directory(
 
     requested = set(request.fields)
     field_map = {
-        "Director Name": "director", "Email Address": "email", "Phone Number": "phone",
+        "Email Address": "email", "Phone Number": "phone",
         "Number of Employees": "employees", "Annual Turnover": "turnover",
-        "Company Address": "address", "Company Website": "website",
+        "Company Address": "address",
     }
     for record in collected:
         for label, key in field_map.items():
-            if label not in requested and key != "director":
+            if label not in requested:
                 record[key] = 0 if key in {"employees", "turnover"} else ""
-        # B2C Website is always retained because it is a required deliverable.
+        # Keep official IDs, registry URL, source provenance, official website,
+        # and B2C match status for client auditability.
     return collected
 
 
