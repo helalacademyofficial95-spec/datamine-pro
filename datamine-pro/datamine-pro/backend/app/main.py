@@ -313,7 +313,7 @@ def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
     legal_form = str(item.get("nature_juridique") or "")
     legal_status = str(item.get("etat_administratif") or "")
     finances = item.get("finances") if isinstance(item.get("finances"), dict) else {}
-    turnover_years = [int(match.group(1)) for key in finances if (match := re.search(r"(20\\d{2})", str(key)))]
+    turnover_years = [int(match.group(1)) for key in finances if (match := re.search(r"(20\d{2})", str(key)))]
     turnover_year = max(turnover_years, default=0)
     return {
         "id": f"extracted-{uuid.uuid4().hex[:12]}",
@@ -342,6 +342,7 @@ def _directory_record(item: dict[str, Any], country: str) -> dict[str, Any]:
         "address": address[:240],
         "website": website,
         "b2cWebsite": None,
+        "b2cWebsiteStatus": "not_checked",
         "emailVerified": False,
         "phoneVerified": False,
         "verification": "Unverified",
