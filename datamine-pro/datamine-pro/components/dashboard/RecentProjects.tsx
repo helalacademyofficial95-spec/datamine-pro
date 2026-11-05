@@ -20,7 +20,7 @@ export function RecentProjects({ projects }: { projects: Project[] }) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-semibold">{p.name}</span>
-                {p.origin === "sample" ? <SampleBadge /> : <Badge tone="brand">Demo run</Badge>}
+                {p.origin === "sample" ? <SampleBadge /> : p.origin === "extracted" ? <Badge tone="ok">Live extraction</Badge> : <Badge tone="brand">Demo run</Badge>}
               </div>
               <div className="mt-1 text-xs text-muted">
                 {p.country} · {p.recordsFound} records · {formatDate(p.createdAt)}
