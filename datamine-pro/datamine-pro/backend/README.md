@@ -1,6 +1,6 @@
-# DataMine Pro Python API (starter)
+# DataMine Pro Python API
 
-This is the first real backend implementation. It fetches only the exact public source URLs supplied by the user, checks each source's `robots.txt`, identifies itself with a User-Agent, spaces requests, and does not bypass logins, CAPTCHAs, paywalls, or other restrictions.
+This FastAPI service supports public, permitted company-page extraction and a dedicated connector for the French Annuaire des Entreprises search page.
 
 ## Run locally
 
@@ -18,26 +18,45 @@ Check `http://localhost:8000/health` and API docs at `http://localhost:8000/docs
 
 ## Environment
 
-- `FRONTEND_ORIGINS`: comma-separated allowed frontend origins. Defaults to the production DataMine Pro URL and localhost.
-- `CRAWLER_USER_AGENT`: identify the crawler and provide a monitored contact address before production use. The default uses a reserved example address and MUST be replaced.
+- `FRONTEND_ORIGINS`: comma-separated allowed frontend origins.
+- `CRAWLER_USER_AGENT`: descriptive crawler identity. Replace the example contact before wider use.
 
 ## API contract
 
 - `GET /health`
-- `POST /jobs` — accepts the frontend `ExtractionRequest`, returns a queued job.
+- `POST /jobs` — accepts the frontend extraction request.
 - `GET /jobs/{id}` — job state and progress.
 - `POST /jobs/{id}/cancel` — request cancellation.
 - `GET /jobs/{id}/results` — returns `{ job, companies }`.
 
-## Important limitations in this first version
+## French Annuaire des Entreprises connector
 
-- This starter treats each submitted source URL as one possible company page. It extracts visible metadata, email addresses, phone links, and address markup from that page. It does not yet discover multiple company profiles from directory listing pages.
-- B2C Website is populated only when the source page itself contains an explicit shop/store/boutique link. It never guesses a storefront domain. Each match needs review.
-- Employee counts and turnover are returned as zero when not found because the current frontend contract requires numeric fields. Zero means **unknown/not found**, not a confirmed zero.
-- Email and phone values are not independently verified. Verification flags remain false.
-- Director names are not collected in this starter version.
-- Jobs and results are held in process memory. They disappear when the service restarts and are unsuitable for multi-instance production deployment without persistent storage and a durable queue.
-- Each job accepts at most 10 URLs. The service refuses local/private network targets and does not follow redirects.
-- Robots rules are treated conservatively: if `robots.txt` cannot be retrieved, the source is skipped. Check website terms and applicable privacy law as well.
+When the submitted source is `https://annuaire-entreprises.data.gouv.fr/rechercher`, the service uses the official open Recherche d'Entreprises API that powers the directory search, rather than attempting to scrape the search page's HTML.
 
-Do not use this backend to collect restricted or unnecessary personal data. Only collect business information you are authorized to process.
+- API: `https://recherche-entreprises.api.gouv.fr/search`
+- Supports France only.
+- Uses the selected employee band and annual turnover minimum/maximum filters.
+- Requests active legal units and includes public registered-office, director, finance, and company-complement fields.
+- Fetches up to 10 pages × 25 records (maximum 250 records per run) to keep free-service jobs bounded.
+- Observes the API's published rate limit with a delay between page requests and handles HTTP 429 without retry storms.
+- When an official company website is supplied in the API result, the service checks its robots.txt before fetching it. Public email/phone details and a B2C storefront link are added only when visibly present on that permitted website.
+- B2C website is never guessed. If no explicit storefront link is found, the field remains blank.
+
+The official API does not expose every field shown on the directory website. Employee headcount is provided in bands, not as an exact count; this connector leaves the exact numeric employee field at zero (unknown) rather than fabricating a number. Turnover can also be absent. Director names are only included when supplied by the public API. Email and phone are not independently verified.
+
+Official API documentation: https://recherche-entreprises.api.gouv.fr/docs/
+
+## Other public website URLs
+
+Other submitted URLs are still treated as individual company pages, not as directory discovery sources. The service extracts visible metadata, email addresses, phone links, address markup, and explicit shop/store links from each permitted page.
+
+## Important limitations and safeguards
+
+- The French connector is currently the only supported directory adapter.
+- Jobs and results are held in process memory and disappear if the Render service restarts.
+- Each job accepts at most 10 source URLs.
+- The service refuses local/private network targets and does not bypass logins, CAPTCHAs, paywalls, or access restrictions.
+- Website enrichment is skipped if robots.txt cannot be checked or disallows the crawler.
+- The French public API excludes non-diffusible businesses and may not expose all information available on the directory website.
+- Review extracted records before use. Missing values remain blank/unknown; email and phone are not verified.
+- Use only information you are authorized to process and follow the source's terms and applicable privacy requirements.
