@@ -3,7 +3,9 @@
  * Nothing here is used for real scraping yet. When you build the backend, make it return these shapes.
  * See /backend/README.md for setup and endpoint details.
  */
-import type { Company } from "../types";
+import type { Company as CompanyRecord } from "../types";
+
+export type Company = CompanyRecord;
 
 export interface ExtractionRequest {
   projectName: string;
