@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from .country_routes import router as country_router
 from .sources import UNSUPPORTED_MESSAGE, UNSUPPORTED_REGISTRY_MESSAGE, classify_page, is_unsupported_registry
-from .enrichment import runner as enrichment_runner, store as enrichment_store
+from .enrichment import runner as enrichment_runner, store as enrichment_store, queue as enrichment_queue
 from .enrichment.service import apply_enrichment
 from .enrichment_routes import build_router as build_enrichment_router
 
@@ -157,7 +157,9 @@ async def initialize_persistent_storage() -> None:
     if DATABASE_URL:
         try:
             enrichment_store.init_table(DATABASE_URL)
-        except Exception:  # optional feature: must never stop extraction or record listing
+            enrichment_queue.init_table(DATABASE_URL)
+        except Exception:
+            # Core extraction and record listing remain available if optional enrichment storage fails.
             pass
 
 
@@ -175,7 +177,7 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
 )
 
 
@@ -614,25 +616,22 @@ async def _run_annuaire_directory(
 
 
 async def _auto_enrich(records: list[dict[str, Any]]) -> None:
-    """Discover official/B2C websites and public contacts for a finished extraction.
-
-    Runs in chunks of MAX_BATCH so a company that keeps failing cannot stall the rest, and never
-    raises: the extraction itself is already saved and complete.
-    """
-    if not DATABASE_URL:
+    """Queue every extracted company and start a durable worker; no 250-record cutoff."""
+    if not DATABASE_URL or not records:
         return
-    size = enrichment_runner.MAX_BATCH
-    for start in range(0, min(len(records), 250), size):
-        chunk = records[start:start + size]
-        try:
-            while enrichment_runner.state["running"]:  # another batch (manual run) is active
-                await asyncio.sleep(5)
-            await enrichment_runner.run_batch(
-                database_url=DATABASE_URL, user_agent=USER_AGENT,
-                load_records=lambda chunk=chunk: chunk, limit=size,
-            )
-        except Exception:
-            continue
+    try:
+        await asyncio.to_thread(enrichment_queue.init_table, DATABASE_URL)
+        enriched = await asyncio.to_thread(enrichment_store.load_map, DATABASE_URL)
+        pending = [
+            record for record in records
+            if (key := enrichment_runner.record_key(record)) is not None and key not in enriched
+        ]
+        await asyncio.to_thread(enrichment_queue.enqueue_records, DATABASE_URL, pending)
+        if not enrichment_runner.state["running"]:
+            await enrichment_runner.run_queue(database_url=DATABASE_URL, user_agent=USER_AGENT)
+    except Exception:
+        # Extraction stays completed; queued work is retained for manual resume.
+        return
 
 
 async def _run_job(job_id: str, request: ExtractionRequest) -> None:
