@@ -68,6 +68,16 @@ def enqueue_records(database_url: str, records: list[dict[str, Any]]) -> int:
 def claim_batch(database_url: str, limit: int) -> list[dict[str, Any]]:
     """Atomically claim a bounded batch and recover stale processing leases."""
     with _connect(database_url) as connection:
+        # Recover leases that expired during the final permitted attempt.
+        connection.execute("""
+            UPDATE enrichment_queue
+            SET status='failed', locked_at=NULL,
+                last_error=COALESCE(last_error, 'Worker lease expired after maximum attempts'),
+                updated_at=NOW()
+            WHERE status='processing'
+              AND attempts >= %s
+              AND locked_at < NOW() - (%s * INTERVAL '1 minute')
+        """, (MAX_ATTEMPTS, STALE_MINUTES))
         rows = connection.execute("""
             WITH candidates AS (
                 SELECT country, registration_number
