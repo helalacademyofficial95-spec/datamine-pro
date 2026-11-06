@@ -64,6 +64,14 @@ The registry publishes no websites, so a separate, resumable step looks for them
 
 Environment: `ENRICHMENT_ADMIN_TOKEN` (long random secret), `CRAWLER_USER_AGENT`.
 
+## Supported sources (what a submitted URL may be)
+
+- French Annuaire des Entreprises search URL: official API (tested against fixtures and, earlier, a real run of 644 records).
+- A page that publishes several companies as schema.org JSON-LD: one record per company (tested on fixtures only, not on real directories).
+- A single company website: one record from its visible metadata and contacts.
+- Anything else (JavaScript-only directories, pages without structured data) fails with a clear message instead of being stored as one company.
+- Belgian (KBO) and Luxembourg (LBR) registry pages are rejected with a message: no connector exists yet.
+
 ## Other public website URLs
 
 Other submitted URLs are still treated as individual company pages, not as directory discovery sources. The service extracts visible metadata, email addresses, phone links, address markup, and explicit shop/store links from each permitted page.
