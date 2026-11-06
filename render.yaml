@@ -12,3 +12,6 @@ services:
         value: https://datamine-pro.vercel.app,https://datamine-i9hoq875a-helalacademyofficial95-3918.vercel.app,http://localhost:3000
       - key: CRAWLER_USER_AGENT
         sync: false
+      # Long random secret. Enables POST /enrichment/run (disabled while unset). Never commit its value.
+      - key: ENRICHMENT_ADMIN_TOKEN
+        sync: false

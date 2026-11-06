@@ -40,6 +40,12 @@ function b2cStatusLabel(status?: string) {
     robots_disallowed_or_unavailable: "Website check not permitted",
     website_check_failed: "Website check failed",
     not_checked: "Not checked yet",
+    // Results of website discovery + B2C matching (backend /enrichment).
+    verified: "Verified B2C website",
+    partially_verified: "B2C website, partly verified",
+    unverified: "Unverified, not reported as a match",
+    not_found: "Searched, no B2C website found",
+    not_applicable: "Not applicable (business-to-business)",
   };
   return status ? labels[status] ?? status.replaceAll("_", " ") : "Not checked yet";
 }

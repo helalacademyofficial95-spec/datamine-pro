@@ -1,0 +1,138 @@
+"""Candidate website discovery from legitimate, free, automation-friendly sources.
+
+Sources, in order of trust:
+1. registry   - a website published by the official registry (the French API publishes none today).
+2. wikidata   - 'official website' (P856) of the item carrying this SIREN (P1616). CC0 data,
+                public SPARQL endpoint; coverage is small (mostly larger companies).
+3. domain_guess - domains derived from the legal/trade name (e.g. petitbistrot.fr). These are only
+                  CANDIDATES: they are fetched and must pass verification before being reported.
+
+We deliberately do not scrape search-engine result pages or commercial company directories.
+"""
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+from urllib.parse import quote, urlparse
+
+from .text import core_tokens, host_matches, name_variants
+
+WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
+DEFAULT_TLDS = ("fr", "com")
+MAX_GUESSES = 6
+
+# Hosts that are never a company's own website.
+SOCIAL_DOMAINS = {
+    "facebook.com", "instagram.com", "linkedin.com", "pinterest.com", "youtube.com", "youtu.be",
+    "tiktok.com", "x.com", "twitter.com", "snapchat.com", "whatsapp.com", "wa.me", "t.me",
+}
+MARKETPLACE_DOMAINS = {
+    "amazon.fr", "amazon.com", "amazon.de", "ebay.fr", "ebay.com", "etsy.com", "cdiscount.com",
+    "leboncoin.fr", "vinted.fr", "rakuten.com", "fr.shopping.rakuten.com", "aliexpress.com",
+    "fnac.com", "darty.com", "booking.com", "airbnb.fr", "airbnb.com", "tripadvisor.fr",
+    "tripadvisor.com", "thefork.fr", "ubereats.com", "deliveroo.fr", "doctolib.fr",
+    "planity.com", "treatwell.fr", "tooltyp.com",
+}
+DIRECTORY_DOMAINS = {
+    "pagesjaunes.fr", "societe.com", "pappers.fr", "infogreffe.fr", "verif.com", "manageo.fr",
+    "kompass.com", "europages.fr", "europages.com", "annuaire-entreprises.data.gouv.fr",
+    "data.gouv.fr", "entreprises.lefigaro.fr", "bfmtv.com", "yelp.fr", "yelp.com",
+    "trustpilot.com", "google.com", "g.page", "goo.gl", "maps.app.goo.gl", "wikipedia.org",
+    "opencorporates.com", "bodacc.fr", "ellisphere.fr", "score3.fr", "lagazettefrance.fr",
+    "mappy.com", "foursquare.com", "cylex.fr", "hotfrog.fr", "kbo-bce.be", "lbr.lu",
+}
+EXCLUDED_DOMAINS = SOCIAL_DOMAINS | MARKETPLACE_DOMAINS | DIRECTORY_DOMAINS
+
+
+def site_kind(url: str) -> str | None:
+    """'social' | 'marketplace' | 'directory' when the URL is such a page, else None."""
+    host = (urlparse(url).hostname or "").lower()
+    if host_matches(host, SOCIAL_DOMAINS):
+        return "social"
+    if host_matches(host, MARKETPLACE_DOMAINS):
+        return "marketplace"
+    if host_matches(host, DIRECTORY_DOMAINS):
+        return "directory"
+    return None
+
+
+def normalize_website(raw: str) -> str:
+    """Return a clean https URL root for a website string, or '' if it is not a usable site."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if not re.match(r"^https?://", raw, re.I):
+        raw = "https://" + raw
+    parsed = urlparse(raw)
+    host = (parsed.hostname or "").lower()
+    if not host or "." not in host or not re.match(r"^[a-z0-9.-]+$", host):
+        return ""
+    if site_kind(raw):
+        return ""
+    return f"{parsed.scheme.lower()}://{host}"
+
+
+def guess_domains(raw_name: str, tlds: tuple[str, ...] = DEFAULT_TLDS, limit: int = MAX_GUESSES) -> list[str]:
+    """Candidate domains from a registry name. Pure and deterministic; nothing is fetched here."""
+    slugs: list[str] = []
+
+    def add(slug: str) -> None:
+        slug = slug.strip("-")
+        if 4 <= len(slug) <= 40 and re.match(r"^[a-z0-9-]+$", slug) and slug not in slugs:
+            slugs.append(slug)
+
+    for variant in name_variants(raw_name):
+        tokens = core_tokens(variant)
+        if not tokens:
+            continue
+        if len(tokens) == 1:
+            add(tokens[0])
+        else:
+            add("".join(tokens))
+            add("-".join(tokens))
+            if len(tokens) > 2:
+                add("".join(tokens[:2]))
+                add("-".join(tokens[:2]))
+    urls: list[str] = []
+    for tld in tlds:
+        for slug in slugs:
+            url = f"https://{slug}.{tld}"
+            if url not in urls:
+                urls.append(url)
+    return urls[:limit]
+
+
+def wikidata_query(siren: str) -> str:
+    """SPARQL for the official website of the item whose SIREN (P1616) is given."""
+    if not re.fullmatch(r"\d{9}", siren or ""):
+        raise ValueError("SIREN must be exactly nine digits.")
+    return (
+        "SELECT ?site WHERE { ?item wdt:P1616 \"%s\" . ?item wdt:P856 ?site . } LIMIT 3" % siren
+    )
+
+
+def wikidata_url(siren: str) -> str:
+    return f"{WIKIDATA_ENDPOINT}?format=json&query={quote(wikidata_query(siren))}"
+
+
+def parse_wikidata_response(payload: Any) -> list[str]:
+    """Official-website URLs from a SPARQL JSON response (ignores social/marketplace/directory)."""
+    sites: list[str] = []
+    try:
+        bindings = payload["results"]["bindings"]
+    except (KeyError, TypeError):
+        return sites
+    for binding in bindings:
+        value = (binding.get("site") or {}).get("value") if isinstance(binding, dict) else None
+        site = normalize_website(value or "")
+        if site and site not in sites:
+            sites.append(site)
+    return sites
+
+
+def parse_wikidata_text(text: str) -> list[str]:
+    try:
+        return parse_wikidata_response(json.loads(text))
+    except ValueError:
+        return []
