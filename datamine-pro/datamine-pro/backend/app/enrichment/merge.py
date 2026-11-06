@@ -43,9 +43,21 @@ def overlay_enrichment(record: dict[str, Any], data: dict[str, Any] | None) -> d
         out["website"] = data["officialWebsite"]
         out["verification"] = "Verified" if site_status == VERIFIED else "Partially verified"
 
+        if data.get("contactEmail") and not out.get("email"):
+            out["email"] = data["contactEmail"]
+            out["emailSource"] = data.get("contactEmailSource") or ""
+        if data.get("contactPhone") and not out.get("phone"):
+            out["phone"] = data["contactPhone"]
+            out["phoneSource"] = data.get("contactPhoneSource") or ""
+    evidence = data.get("officialWebsiteEvidence") or []
+    out["websiteStatus"] = STATUS_SLUG.get(site_status or NOT_FOUND, "not_found")
+    out["websiteSourceUrl"] = next((e.get("url") for e in evidence if e.get("url")), "") if out.get("website") else ""
+    out["checkedAt"] = data.get("checkedAt") or ""
+
     b2c_status = data.get("b2cStatus") or NOT_FOUND
     b2c_url = data.get("b2cWebsite") if b2c_status in (VERIFIED, PARTIAL) else None
     out["b2cWebsite"] = b2c_url
+    out["b2cSourceUrl"] = b2c_url or ""
     out["b2cWebsiteStatus"] = STATUS_SLUG.get(b2c_status, "not_found")
     return out
 

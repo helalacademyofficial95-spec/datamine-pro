@@ -16,7 +16,7 @@ import { prettyUrl } from "@/lib/format";
 type RunState = "idle" | "running" | "done" | "failed" | "cancelled";
 
 export function NewExtractionView() {
-  const { addProject, addCompanies, showToast } = useApp();
+  const { addProject, addCompanies, showToast, reloadCompanies } = useApp();
 
   const [projectName, setProjectName] = useState("");
   const [urlInput, setUrlInput] = useState("");
@@ -122,6 +122,7 @@ export function NewExtractionView() {
 
       const results = await api.getResults(created.id);
       addCompanies(results.companies);
+      void reloadCompanies(); // backend now serves only this extraction, with websites as they are found
       addProject({
         id: `proj-${created.id}`,
         name: finishedName.current,
