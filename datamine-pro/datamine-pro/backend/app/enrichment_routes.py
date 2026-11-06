@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
 
-from .enrichment import runner, store
+from .enrichment import runner, store, queue as durable_queue
 from .enrichment.service import token_ok
 
 
@@ -33,7 +33,13 @@ def build_router(
                 enriched = len(await asyncio.to_thread(store.load_map, database_url))
             except Exception:
                 enriched = None
-        return {"batch": dict(runner.state), "enrichedCount": enriched, "runEnabled": bool(admin_token)}
+        queue = None
+        if database_url:
+            try:
+                queue = await asyncio.to_thread(durable_queue.queue_status, database_url)
+            except Exception:
+                queue = None
+        return {"batch": dict(runner.state), "enrichedCount": enriched, "queue": queue, "runEnabled": bool(admin_token)}
 
     @router.post("/run", status_code=202)
     async def enrichment_run(
@@ -59,5 +65,34 @@ def build_router(
             force=force,
         )
         return {"started": True, "limit": limit, "force": force}
+
+
+    @router.post("/queue/enqueue", status_code=202)
+    async def enqueue_all(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+        if not admin_token:
+            raise HTTPException(status_code=503, detail="Enrichment is disabled: server admin token is not configured.")
+        if not token_ok(x_admin_token, admin_token):
+            raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
+        if not database_url:
+            raise HTTPException(status_code=503, detail="Persistent storage is not configured.")
+        records = await asyncio.to_thread(load_records)
+        enriched = await asyncio.to_thread(store.load_map, database_url)
+        pending = [record for record in records if (key := runner.record_key(record)) is not None and key not in enriched]
+        added = await asyncio.to_thread(durable_queue.enqueue_records, database_url, pending)
+        return {"queued": added, "recordsChecked": len(records), "alreadyEnriched": len(records) - len(pending)}
+
+    @router.post("/queue/run", status_code=202)
+    async def run_queue(background_tasks: BackgroundTasks,
+                        x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+        if not admin_token:
+            raise HTTPException(status_code=503, detail="Enrichment is disabled: server admin token is not configured.")
+        if not token_ok(x_admin_token, admin_token):
+            raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
+        if not database_url:
+            raise HTTPException(status_code=503, detail="Persistent storage is not configured.")
+        if runner.state["running"]:
+            raise HTTPException(status_code=409, detail="An enrichment worker is already running.")
+        background_tasks.add_task(runner.run_queue, database_url=database_url, user_agent=user_agent)
+        return {"started": True, "batchSize": runner.MAX_BATCH}
 
     return router
