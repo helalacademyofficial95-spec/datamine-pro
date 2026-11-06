@@ -89,3 +89,52 @@ async def run_batch(
         state["lastError"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     finally:
         state.update(running=False, finishedAt=_now())
+
+
+async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 100) -> None:
+    """Drain ready durable queue work in bounded batches; safe to resume after restarts."""
+    from . import queue as durable_queue
+    if state["running"]:
+        return
+    state.update(running=True, startedAt=_now(), finishedAt=None, target=0,
+                 processed=0, failed=0, officialWebsitesFound=0, b2cMatches=0, lastError=None)
+    try:
+        timeout = httpx.Timeout(20.0)
+        limits = httpx.Limits(max_connections=6, max_keepalive_connections=2)
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+            fetcher = HttpFetcher(client, user_agent)
+            wikidata = make_wikidata_lookup(client, user_agent)
+            gate = asyncio.Semaphore(CONCURRENCY)
+
+            async def work(record: dict[str, Any]) -> None:
+                key = record_key(record)
+                if key is None:
+                    return
+                async with gate:
+                    try:
+                        data = await asyncio.wait_for(enrich_company(record, fetcher, wikidata), PER_COMPANY_TIMEOUT)
+                        data["enrichmentVersion"] = ENRICHMENT_VERSION
+                        await asyncio.to_thread(store.save_one, database_url, key, data)
+                        await asyncio.to_thread(durable_queue.mark_done, database_url, record)
+                    except Exception as exc:
+                        state["failed"] += 1
+                        state["lastError"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                        await asyncio.to_thread(durable_queue.mark_failed, database_url, record,
+                                                f"{type(exc).__name__}: {str(exc)[:400]}")
+                        return
+                    state["processed"] += 1
+                    if data.get("officialWebsite"):
+                        state["officialWebsitesFound"] += 1
+                    if data.get("b2cWebsite"):
+                        state["b2cMatches"] += 1
+
+            for _ in range(max(1, min(max_batches, 100))):
+                batch = await asyncio.to_thread(durable_queue.claim_batch, database_url, MAX_BATCH)
+                if not batch:
+                    break
+                state["target"] += len(batch)
+                await asyncio.gather(*(work(record) for record in batch))
+    except Exception as exc:
+        state["lastError"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+    finally:
+        state.update(running=False, finishedAt=_now())
