@@ -25,7 +25,9 @@ def record_key(record: dict[str, Any]) -> Key | None:
     """(country, registration number). None when the record has no usable identifier."""
     registration = re.sub(r"\D", "", str(record.get("siren") or record.get("sourceRecordId") or ""))
     country = str(record.get("country") or "").strip()
-    if len(registration) < 8 or not country:
+    if len(registration) < 8 and str(record.get("id") or "").startswith("gen-"):
+        registration = str(record["id"])  # records from structured-data listings have no registry number
+    if (len(registration) < 8) or not country:
         return None
     return country, registration
 

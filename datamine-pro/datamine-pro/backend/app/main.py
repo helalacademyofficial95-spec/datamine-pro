@@ -20,6 +20,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from .country_routes import router as country_router
+from .sources import UNSUPPORTED_MESSAGE, UNSUPPORTED_REGISTRY_MESSAGE, classify_page, is_unsupported_registry
 from .enrichment import runner as enrichment_runner, store as enrichment_store
 from .enrichment.service import apply_enrichment
 from .enrichment_routes import build_router as build_enrichment_router
@@ -637,6 +638,7 @@ async def _auto_enrich(records: list[dict[str, Any]]) -> None:
 async def _run_job(job_id: str, request: ExtractionRequest) -> None:
     job = jobs[job_id]
     companies: list[dict[str, Any]] = []
+    notes: list[str] = []  # why a source yielded nothing; shown to the user instead of a silent empty result
     try:
         job.update(state="running", progress=5, message="Checking source permissions")
         timeout = httpx.Timeout(REQUEST_TIMEOUT)
@@ -647,6 +649,9 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                     job.update(state="cancelled", message="Extraction cancelled")
                     return
                 source_url = str(source)
+                if is_unsupported_registry(source_url):
+                    notes.append(UNSUPPORTED_REGISTRY_MESSAGE)
+                    continue
                 if _is_annuaire_directory(source_url):
                     directory_records = await _run_annuaire_directory(client, job_id, request, source_url)
                     companies.extend(directory_records)
@@ -654,9 +659,23 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                 try:
                     source_url = _public_http_url(source_url)
                     if not await _robots_allows(client, source_url):
+                        notes.append(f"{urlparse(source_url).hostname}: robots.txt does not permit automated access, or it could not be checked.")
                         continue
                     html = await _get_page(client, source_url)
                     if not html:
+                        notes.append(f"{urlparse(source_url).hostname}: the page could not be fetched.")
+                        continue
+                    kind, listing_records = classify_page(html, source_url, request.country)
+                    if kind == "unsupported":
+                        notes.append(UNSUPPORTED_MESSAGE)
+                        continue
+                    if kind == "listing":
+                        companies.extend(listing_records)
+                        job.update(
+                            progress=min(90, 10 + int(80 * (source_index + 1) / len(request.sourceUrls))),
+                            recordsFound=len(companies),
+                            message=f"Read {len(listing_records)} companies listed on {urlparse(source_url).hostname}",
+                        )
                         continue
                     record = _extract_record(html, source_url, request.country, source_index)
                     employee_count = record["employees"]
@@ -687,7 +706,10 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
                         message=f"Processed {source_index + 1} of {len(request.sourceUrls)} source websites",
                     )
                 except ValueError:
+                    notes.append(f"{urlparse(source_url).hostname}: address is not a permitted public website.")
                     continue
+        if not companies:
+            raise RuntimeError(" ".join(dict.fromkeys(notes)) or "No company records were found at the submitted address.")
         job["companies"] = companies
         job.update(
             state="completed",
@@ -703,7 +725,7 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
         _save_job(job)
         await _auto_enrich(companies)
     except Exception as exc:
-        job.update(state="failed", message=f"Extraction failed: {str(exc)[:240]}")
+        job.update(state="failed", message=f"Extraction failed: {str(exc)[:600]}")
         try:
             _save_job(job)
         except Exception:
