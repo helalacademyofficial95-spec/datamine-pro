@@ -17,6 +17,11 @@ jobs:
           python-version: "3.11"
       - name: Compile backend modules
         run: python -m compileall -q datamine-pro/datamine-pro/backend/app
+      - name: Install backend dependencies
+        run: pip install -r datamine-pro/datamine-pro/backend/requirements.txt -r datamine-pro/datamine-pro/backend/requirements-dev.txt
+      - name: Backend tests
+        working-directory: datamine-pro/datamine-pro/backend
+        run: python -m pytest -q
 
   frontend:
     name: Frontend typecheck and production build

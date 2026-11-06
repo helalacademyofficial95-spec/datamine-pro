@@ -20,6 +20,9 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from .country_routes import router as country_router
+from .enrichment import store as enrichment_store
+from .enrichment.service import apply_enrichment
+from .enrichment_routes import build_router as build_enrichment_router
 
 APP_VERSION = "0.2.0"
 USER_AGENT = os.getenv(
@@ -137,11 +140,22 @@ def _load_saved_companies() -> list[dict[str, Any]]:
 
 app = FastAPI(title="DataMine Pro Extraction API", version=APP_VERSION)
 app.include_router(country_router)
+app.include_router(build_enrichment_router(
+    database_url=DATABASE_URL,
+    user_agent=USER_AGENT,
+    load_records=_load_saved_companies,
+    admin_token=os.getenv("ENRICHMENT_ADMIN_TOKEN", "").strip(),
+))
 
 
 @app.on_event("startup")
 async def initialize_persistent_storage() -> None:
     _init_database()
+    if DATABASE_URL:
+        try:
+            enrichment_store.init_table(DATABASE_URL)
+        except Exception:  # optional feature: must never stop extraction or record listing
+            pass
 
 
 allowed_origins = [
@@ -731,8 +745,10 @@ async def cancel_job(job_id: str) -> ExtractionJob:
 
 @app.get("/companies")
 async def list_extracted_companies() -> dict[str, Any]:
-    """Return all completed extraction records from persistent storage."""
+    """Return all completed extraction records, with stored website/B2C enrichment overlaid."""
     records = _load_saved_companies()
+    if DATABASE_URL:
+        records = apply_enrichment(records, lambda: enrichment_store.load_map(DATABASE_URL))
     return {"companies": records, "count": len(records)}
 
 @app.get("/jobs/{job_id}/results")

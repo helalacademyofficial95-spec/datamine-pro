@@ -50,6 +50,20 @@ The official API does not expose every field shown on the directory website. Emp
 
 Official API documentation: https://recherche-entreprises.api.gouv.fr/docs/
 
+## Website discovery and B2C matching (`/enrichment`)
+
+The registry publishes no websites, so a separate, resumable step looks for them after extraction. Results are stored in their own Neon table (`company_enrichment`, keyed by country + registration number); extraction records are never modified and are overlaid with the results only when `GET /companies` is served.
+
+- `POST /enrichment/run?limit=25` starts one batch (max 50 companies). Send the header `X-Admin-Token: <ENRICHMENT_ADMIN_TOKEN>`. The endpoint is disabled while that environment variable is unset. Call it again to continue with the next unprocessed companies.
+- `GET /enrichment/status` shows batch progress (public, read-only).
+- Candidate sites come from the registry, Wikidata (by SIREN) and domains derived from the company name. Search-engine pages and commercial directories are not scraped.
+- A site is reported only after it was fetched and inspected. "Verified" requires the company's SIREN/SIRET on the site's own legal notice plus a name or postal-code match; weaker evidence is "Partially Verified" or "Unverified" (kept as an audit trail, never shown as the company's website).
+- B2C status is separate from ownership and never stronger than either: marketplaces, social pages and directories are never accepted, and B2B-only sites are marked "Not Applicable".
+- Every request honours robots.txt, is rate-limited per host, refuses private network addresses, and caps page size. Set `CRAWLER_USER_AGENT` to a real contact address.
+- Emails and phone numbers are not collected by this step yet.
+
+Environment: `ENRICHMENT_ADMIN_TOKEN` (long random secret), `CRAWLER_USER_AGENT`.
+
 ## Other public website URLs
 
 Other submitted URLs are still treated as individual company pages, not as directory discovery sources. The service extracts visible metadata, email addresses, phone links, address markup, and explicit shop/store links from each permitted page.
