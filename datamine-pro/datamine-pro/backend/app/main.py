@@ -20,7 +20,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from .country_routes import router as country_router
-from .enrichment import store as enrichment_store
+from .enrichment import runner as enrichment_runner, store as enrichment_store
 from .enrichment.service import apply_enrichment
 from .enrichment_routes import build_router as build_enrichment_router
 
@@ -114,7 +114,7 @@ def _load_saved_job(job_id: str) -> dict[str, Any] | None:
     }
 
 
-def _load_saved_companies() -> list[dict[str, Any]]:
+def _load_saved_companies(latest_only: bool = False) -> list[dict[str, Any]]:
     if not DATABASE_URL:
         return []
     with psycopg.connect(DATABASE_URL, connect_timeout=10) as connection:
@@ -123,6 +123,8 @@ def _load_saved_companies() -> list[dict[str, Any]]:
             WHERE state = 'completed'
             ORDER BY updated_at DESC
         """).fetchall()
+    if latest_only:
+        rows = rows[:1]  # newest completed extraction only; older jobs stay in the database
     records: dict[str, dict[str, Any]] = {}
     for (items,) in rows:
         if isinstance(items, list):
@@ -610,6 +612,28 @@ async def _run_annuaire_directory(
     return collected
 
 
+async def _auto_enrich(records: list[dict[str, Any]]) -> None:
+    """Discover official/B2C websites and public contacts for a finished extraction.
+
+    Runs in chunks of MAX_BATCH so a company that keeps failing cannot stall the rest, and never
+    raises: the extraction itself is already saved and complete.
+    """
+    if not DATABASE_URL:
+        return
+    size = enrichment_runner.MAX_BATCH
+    for start in range(0, min(len(records), 250), size):
+        chunk = records[start:start + size]
+        try:
+            while enrichment_runner.state["running"]:  # another batch (manual run) is active
+                await asyncio.sleep(5)
+            await enrichment_runner.run_batch(
+                database_url=DATABASE_URL, user_agent=USER_AGENT,
+                load_records=lambda chunk=chunk: chunk, limit=size,
+            )
+        except Exception:
+            continue
+
+
 async def _run_job(job_id: str, request: ExtractionRequest) -> None:
     job = jobs[job_id]
     companies: list[dict[str, Any]] = []
@@ -677,6 +701,7 @@ async def _run_job(job_id: str, request: ExtractionRequest) -> None:
             ),
         )
         _save_job(job)
+        await _auto_enrich(companies)
     except Exception as exc:
         job.update(state="failed", message=f"Extraction failed: {str(exc)[:240]}")
         try:
@@ -744,9 +769,10 @@ async def cancel_job(job_id: str) -> ExtractionJob:
 
 
 @app.get("/companies")
-async def list_extracted_companies() -> dict[str, Any]:
-    """Return all completed extraction records, with stored website/B2C enrichment overlaid."""
-    records = _load_saved_companies()
+async def list_extracted_companies(scope: str = "latest") -> dict[str, Any]:
+    """Records of the newest completed extraction (scope=latest, default) or of every completed
+    extraction (scope=all), with stored website/B2C enrichment overlaid. Nothing is deleted."""
+    records = _load_saved_companies(latest_only=scope != "all")
     if DATABASE_URL:
         records = apply_enrichment(records, lambda: enrichment_store.load_map(DATABASE_URL))
     return {"companies": records, "count": len(records)}

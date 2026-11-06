@@ -21,6 +21,14 @@ export interface Company {
   sourceType?: string;
   sourceRecordId?: string;
   b2cWebsiteStatus?: string;
+  /** Per-field results of website discovery (backend /enrichment). */
+  websiteStatus?: string;
+  websiteSourceUrl?: string;
+  b2cSourceUrl?: string;
+  emailSource?: string;
+  phoneSource?: string;
+  /** ISO date the website/B2C check was made */
+  checkedAt?: string;
   director: string;
   email: string;
   phone: string;

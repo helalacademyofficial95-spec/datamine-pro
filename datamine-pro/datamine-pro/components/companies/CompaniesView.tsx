@@ -63,7 +63,7 @@ const COLUMNS: { key: SortKey; label: string; align?: "right" }[] = [
 ];
 
 export function CompaniesView() {
-  const { companies, isDemoData, filters, setFilters, resetFilters } = useApp();
+  const { companies, isDemoData, filters, setFilters, resetFilters, reloadCompanies } = useApp();
   const [showFilters, setShowFilters] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -149,7 +149,12 @@ export function CompaniesView() {
               </button>
             )}
           </div>
-          <ExportBar selected={selected} filtered={filtered} />
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-secondary" onClick={() => void reloadCompanies()} title="Reload records, including websites found since the extraction finished">
+              <RotateCcw className="h-4 w-4" aria-hidden /> Refresh
+            </button>
+            <ExportBar selected={selected} filtered={filtered} />
+          </div>
         </div>
 
         {showFilters && (
@@ -225,9 +230,9 @@ export function CompaniesView() {
                         {c.origin === "sample" && <SampleBadge label="Sample" />}
                       </div>
                     </td>
-                    <td className="whitespace-nowrap px-3 py-3">{c.director}</td>
-                    <td className="px-3 py-3 text-muted">{c.email}</td>
-                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted">{c.phone}</td>
+                    <td className="whitespace-nowrap px-3 py-3">{c.director || <span className="text-muted">Not Found</span>}</td>
+                    <td className="px-3 py-3 text-muted">{c.email || "Not Found"}</td>
+                    <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted">{c.phone || "Not Found"}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{employeeDisplay(c)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{c.turnover > 0 ? `${formatEuro(c.turnover)}${c.turnoverYear ? ` (${c.turnoverYear})` : ""}` : "Not published"}</td>
                     <td className="px-3 py-3">{c.country}</td>

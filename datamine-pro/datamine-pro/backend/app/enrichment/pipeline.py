@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from . import ENRICHMENT_VERSION, NOT_FOUND, PARTIAL, UNVERIFIED, VERIFIED
 from .classify import assess_site, b2c_status, find_shop_links
+from .contacts import find_contacts
 from .discovery import guess_domains, normalize_website
 from .pagefacts import PageFacts, parse_html
 from .text import same_site
@@ -121,6 +122,10 @@ def _empty_result(today: date) -> dict[str, Any]:
         "b2cSiteType": "unknown",
         "b2cEvidence": [],
         "b2cExplanation": "",
+        "contactEmail": None,
+        "contactEmailSource": None,
+        "contactPhone": None,
+        "contactPhoneSource": None,
         "candidatesChecked": [],
     }
 
@@ -180,6 +185,7 @@ async def enrich_company(
             {"type": "domain_derived_from_name", "detail": "Domain derived from the company name, then verified on the site itself", "url": root}
         ] + verification.evidence
 
+    result.update(find_contacts(pages))  # only from pages of the accepted site
     home_facts = pages[0]
     best_assessment = assess_site(home_facts)
     b2c_url = root
