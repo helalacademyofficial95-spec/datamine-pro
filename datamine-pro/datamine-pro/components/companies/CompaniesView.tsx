@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, RotateCcw, Search, SearchX, SlidersHorizontal } from "lucide-react";
 import { useApp } from "@/context/AppContext";
-import { countActiveFilters, filterCompanies, sortCompanies } from "@/lib/filters";
+import { categoryOptions, countActiveFilters, filterCompanies, sortCompanies } from "@/lib/filters";
 import type { SortDir, SortKey } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DemoNotice } from "@/components/ui/DemoNotice";
@@ -71,6 +71,7 @@ export function CompaniesView() {
   const [pageSize, setPageSize] = useState(10);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  const categories = useMemo(() => categoryOptions(companies), [companies]);
   const filtered = useMemo(
     () => sortCompanies(filterCompanies(companies, filters), sortKey, sortDir),
     [companies, filters, sortKey, sortDir]
@@ -159,7 +160,7 @@ export function CompaniesView() {
 
         {showFilters && (
           <div className="mt-4 border-t border-line pt-4">
-            <FilterPanel filters={filters} onChange={setFilters} showSearch={false} />
+            <FilterPanel filters={filters} onChange={setFilters} showSearch={false} categories={categories} />
             <p className="mt-3 text-xs text-muted">
               Want to keep a set of filters? Save it on the <Link href="/filters" className="text-brand hover:underline">Data Filters</Link> page.
             </p>
@@ -229,6 +230,7 @@ export function CompaniesView() {
                         )}
                         {c.origin === "sample" && <SampleBadge label="Sample" />}
                       </div>
+                      {c.nafLabel && <div className="text-xs text-muted">{c.nafLabel}</div>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">{c.director || <span className="text-muted">Not Found</span>}</td>
                     <td className="px-3 py-3 text-muted">{c.email || "Not Found"}</td>

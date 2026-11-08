@@ -29,6 +29,21 @@ export interface CompanyFilters {
   turnoverMax: string;
   verification: "all" | VerificationStatus;
   b2c: "all" | "yes" | "no";
+  hasWebsite: "all" | "yes" | "no";
+  hasEmail: "all" | "yes" | "no";
+  hasPhone: "all" | "yes" | "no";
+  /** Business category label (NAF activity), or "all" */
+  category: string;
+}
+
+/** Business category shown in the table, filters and exports. Empty when the registry gave none. */
+export function categoryOf(c: Company): string {
+  return (c.nafLabel ?? "").trim();
+}
+
+/** Sorted distinct categories present in the data, for the category filter. */
+export function categoryOptions(companies: Company[]): string[] {
+  return [...new Set(companies.map(categoryOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
 }
 
 export const DEFAULT_FILTERS: CompanyFilters = {
@@ -42,6 +57,10 @@ export const DEFAULT_FILTERS: CompanyFilters = {
   turnoverMax: "",
   verification: "all",
   b2c: "all",
+  hasWebsite: "all",
+  hasEmail: "all",
+  hasPhone: "all",
+  category: "all",
 };
 
 /** Parses "1 500 000", "1,5" etc. Returns null for empty / invalid input. */
@@ -83,6 +102,12 @@ function matchesTurnover(c: Company, f: CompanyFilters): boolean {
   }
 }
 
+function matchesPresence(mode: "all" | "yes" | "no", value: string | null | undefined): boolean {
+  if (!mode || mode === "all") return true; // saved presets from older versions lack these keys
+  const present = Boolean(value && value.trim());
+  return mode === "yes" ? present : !present;
+}
+
 export function filterCompanies(companies: Company[], f: CompanyFilters): Company[] {
   const q = f.search.trim().toLowerCase();
   return companies.filter((c) => {
@@ -98,6 +123,10 @@ export function filterCompanies(companies: Company[], f: CompanyFilters): Compan
     if (f.verification !== "all" && c.verification !== f.verification) return false;
     if (f.b2c === "yes" && !c.b2cWebsite) return false;
     if (f.b2c === "no" && c.b2cWebsite) return false;
+    if (!matchesPresence(f.hasWebsite, c.website)) return false;
+    if (!matchesPresence(f.hasEmail, c.email)) return false;
+    if (!matchesPresence(f.hasPhone, c.phone)) return false;
+    if (f.category && f.category !== "all" && categoryOf(c) !== f.category) return false;
     return true;
   });
 }
@@ -128,5 +157,9 @@ export function countActiveFilters(f: CompanyFilters): number {
   if (f.turnover !== "all") n++;
   if (f.verification !== "all") n++;
   if (f.b2c !== "all") n++;
+  if (f.hasWebsite && f.hasWebsite !== "all") n++;
+  if (f.hasEmail && f.hasEmail !== "all") n++;
+  if (f.hasPhone && f.hasPhone !== "all") n++;
+  if (f.category && f.category !== "all") n++;
   return n;
 }

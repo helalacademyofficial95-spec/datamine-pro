@@ -20,7 +20,7 @@ from .pagefacts import PageFacts, parse_html
 from .text import same_site
 from .verify import Verification, registration_ids, registry_published, verify_candidate
 
-MAX_CANDIDATES = 6
+MAX_CANDIDATES = 8
 LEGAL_LINK = re.compile(
     r"mentions[ -]?l[eé]gales?|legal[ -]?notice|\blegal\b|imprint|impressum|cgv|conditions[ -]g[eé]n[eé]rales|"
     r"a[ -]propos|\babout\b|qui[ -]sommes|\bcontact",
@@ -41,6 +41,7 @@ class Fetcher(Protocol):
 
 
 WikidataLookup = Callable[[str], Awaitable[list[str]]]
+OsmLookup = Callable[[dict[str, Any]], Awaitable[list[str]]]
 
 
 def pick_legal_links(home: PageFacts, limit: int = 2) -> list[str]:
@@ -82,7 +83,10 @@ def _cap_ownership(status: str, same: bool) -> str:
     return {VERIFIED: PARTIAL, PARTIAL: UNVERIFIED}.get(status, status)
 
 
-async def _candidate_urls(company: dict[str, Any], wikidata: WikidataLookup | None) -> list[tuple[str, str]]:
+async def _candidate_urls(
+    company: dict[str, Any], wikidata: WikidataLookup | None, osm: OsmLookup | None = None,
+    errors: list[str] | None = None,
+) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     seen_hosts: set[str] = set()
 
@@ -99,8 +103,16 @@ async def _candidate_urls(company: dict[str, Any], wikidata: WikidataLookup | No
         try:
             for site in await wikidata(siren):
                 add(site, "wikidata")
-        except Exception:  # an optional free source must never fail the company
-            pass
+        except Exception as exc:  # a source failure never fails the company, but is recorded
+            if errors is not None:
+                errors.append(str(exc)[:120] or type(exc).__name__)
+    if osm:
+        try:
+            for site in await osm(company):
+                add(site, "openstreetmap")
+        except Exception as exc:
+            if errors is not None:
+                errors.append(str(exc)[:120] or type(exc).__name__)
     for guess in guess_domains(str(company.get("name") or "")):
         add(guess, "domain_guess")
     return candidates
@@ -127,6 +139,8 @@ def _empty_result(today: date) -> dict[str, Any]:
         "contactPhone": None,
         "contactPhoneSource": None,
         "candidatesChecked": [],
+        "sourceErrors": [],
+        "discoveryComplete": True,
     }
 
 
@@ -135,10 +149,11 @@ async def enrich_company(
     fetcher: Fetcher,
     wikidata: WikidataLookup | None = None,
     today: date | None = None,
+    osm: OsmLookup | None = None,
 ) -> dict[str, Any]:
     today = today or date.today()
     result = _empty_result(today)
-    candidates = await _candidate_urls(company, wikidata)
+    candidates = await _candidate_urls(company, wikidata, osm, result["sourceErrors"])
 
     best: tuple[str, str, Verification, list[PageFacts]] | None = None  # url, source, verification, pages
     weak: tuple[str, Verification] | None = None
@@ -163,6 +178,14 @@ async def enrich_company(
             weak = (root, verification)
 
     if best is None:
+        # A "not found" is only conclusive when the sources actually answered. If a lookup
+        # failed, or the registry-listed site could not be reached, the caller must retry.
+        registry_unreached = any(
+            c["source"] == "registry" and c["outcome"] == "unreachable_or_not_permitted"
+            for c in result["candidatesChecked"]
+        )
+        if result["sourceErrors"] or registry_unreached:
+            result["discoveryComplete"] = False
         if weak:
             result["officialWebsiteStatus"] = UNVERIFIED
             result["officialWebsiteCandidate"] = weak[0]

@@ -160,7 +160,9 @@ async def initialize_persistent_storage() -> None:
             enrichment_queue.init_table(DATABASE_URL)
         except Exception:
             # Core extraction and record listing remain available if optional enrichment storage fails.
-            pass
+            return
+        # Continue any backlog left by a restart/redeploy; stale leases are recovered safely.
+        await enrichment_runner.resume_if_needed(database_url=DATABASE_URL, user_agent=USER_AGENT)
 
 
 allowed_origins = [

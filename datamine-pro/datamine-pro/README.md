@@ -123,3 +123,13 @@ On Vercel, add the same variable under Project → Settings → Environment Vari
 - **Port already in use:** run `npm run dev -- -p 3001`.
 - **`npm` not recognised:** reinstall Node.js and reopen the terminal.
 - **Weird errors after changing versions:** delete the `node_modules` folder and `.next` folder, then run `npm install` again.
+
+## Enrichment queue: recovery and resume
+
+- The queue lives in Neon (`enrichment_queue`); nothing is held only in memory.
+- Workers claim small batches (`QUEUE_BATCH_SIZE`, default 10) with `FOR UPDATE SKIP LOCKED` and renew their lease every minute.
+- A `processing` row is treated as abandoned only after `QUEUE_STALE_MINUTES` (default 15) without a heartbeat. It is then retried, or marked `failed` if its 3 attempts are used up. Fresh leases are never touched.
+- After a restart or Render wake-up, the worker resumes on startup and whenever `GET /enrichment/status` is polled (no token needed; it only drains existing queue rows).
+- A company is marked `done` only when discovery really ran. If Wikidata/OpenStreetMap failed or the registry site was unreachable, the result is saved as inconclusive (`discoveryComplete: false`, `sourceErrors`) and the row is retried with backoff.
+- `POST /enrichment/queue/requeue-failed` (admin token) gives failed rows a fresh set of attempts.
+- Discovery sources: registry website, Wikidata (by SIREN), OpenStreetMap/Nominatim (name + postcode/city), and domain guesses verified on the site itself. A general web-search provider is not configured (it needs an API key), so companies without a Wikidata/OSM entry or a guessable domain stay "Not Found".

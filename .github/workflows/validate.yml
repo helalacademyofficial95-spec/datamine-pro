@@ -10,6 +10,14 @@ jobs:
   backend-syntax:
     name: Backend Python syntax
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,7 +29,21 @@ jobs:
         run: pip install -r datamine-pro/datamine-pro/backend/requirements.txt -r datamine-pro/datamine-pro/backend/requirements-dev.txt
       - name: Backend tests
         working-directory: datamine-pro/datamine-pro/backend
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:test@localhost:5432/postgres
         run: python -m pytest -q
+
+  frontend-logic:
+    name: Frontend filter and export tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run filter and export tests
+        working-directory: datamine-pro/datamine-pro
+        run: node --experimental-strip-types --no-warnings --test tests/frontend.test.mts
 
   frontend:
     name: Frontend typecheck and production build

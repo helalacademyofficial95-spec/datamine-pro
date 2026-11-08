@@ -12,7 +12,7 @@ def test_record_key_rejects_missing_identifiers():
 
 def test_queue_retry_policy_is_bounded_and_recovers_stale_claims():
     assert MAX_ATTEMPTS == 3
-    assert STALE_MINUTES == 10
+    assert STALE_MINUTES == 15
 
 
 def test_select_pending_keeps_records_without_mutating_input():
