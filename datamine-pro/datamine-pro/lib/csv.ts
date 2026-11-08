@@ -43,6 +43,7 @@ export const EXPORT_COLUMNS: ExportColumn[] = [
   { header: "Registry Source URL", width: 44, value: (c) => c.registryUrl ?? "" },
   { header: "Verification Status", width: 20, value: (c) => c.verification },
   { header: "Data Origin", width: 16, value: (c) => (c.origin === "sample" ? "SAMPLE DATA" : "Extracted") },
+  { header: "Business Category", width: 40, value: (c) => c.nafLabel ?? "" },
 ];
 
 const PHONE_LIKE = /^[+-]?[\d\s().-]+$/;

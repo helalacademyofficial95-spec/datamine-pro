@@ -4,7 +4,9 @@ Sources, in order of trust:
 1. registry   - a website published by the official registry (the French API publishes none today).
 2. wikidata   - 'official website' (P856) of the item carrying this SIREN (P1616). CC0 data,
                 public SPARQL endpoint; coverage is small (mostly larger companies).
-3. domain_guess - domains derived from the legal/trade name (e.g. petitbistrot.fr). These are only
+3. osm       - 'website' tag of a matching OpenStreetMap place (name + postcode), via Nominatim.
+                ODbL data; mostly shops, restaurants and services, i.e. consumer-facing businesses.
+4. domain_guess - domains derived from the legal/trade name (e.g. petitbistrot.fr). These are only
                   CANDIDATES: they are fetched and must pass verification before being reported.
 
 We deliberately do not scrape search-engine result pages or commercial company directories.
@@ -136,3 +138,39 @@ def parse_wikidata_text(text: str) -> list[str]:
         return parse_wikidata_response(json.loads(text))
     except ValueError:
         return []
+
+
+NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/search"
+
+
+def osm_search_url(name: str, postal: str, city: str) -> str:
+    """Nominatim query for a place by name and postcode/city, restricted to France, with extra tags."""
+    query = " ".join(part for part in (name_variants(name)[0] if name_variants(name) else name, postal, city) if part)
+    return (
+        f"{NOMINATIM_ENDPOINT}?q={quote(query)}&format=jsonv2&extratags=1&limit=3&countrycodes=fr"
+    )
+
+
+def parse_osm_response(payload: Any, company_name: str) -> list[str]:
+    """Website URLs from Nominatim results whose place name shares a core token with the company.
+
+    Only a candidate list: every URL is still fetched and must pass ownership verification.
+    """
+    tokens = set(core_tokens(company_name))
+    sites: list[str] = []
+    if not isinstance(payload, list) or not tokens:
+        return sites
+    for place in payload:
+        if not isinstance(place, dict):
+            continue
+        label = f"{place.get('name') or ''} {place.get('display_name') or ''}"
+        if not tokens & set(core_tokens(label)):
+            continue
+        tags = place.get("extratags") or {}
+        if not isinstance(tags, dict):
+            continue
+        for key in ("website", "contact:website", "url"):
+            site = normalize_website(str(tags.get(key) or ""))
+            if site and site not in sites:
+                sites.append(site)
+    return sites

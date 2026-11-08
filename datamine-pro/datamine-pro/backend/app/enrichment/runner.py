@@ -7,17 +7,25 @@ result yet. Only one batch runs at a time.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
 
 from . import ENRICHMENT_VERSION, store
-from .fetcher import HttpFetcher, make_wikidata_lookup
+from .fetcher import HttpFetcher, make_osm_lookup, make_wikidata_lookup
 from .merge import record_key, select_pending
 from .pipeline import enrich_company
 
+log = logging.getLogger("datamine.runner")
+
 MAX_BATCH = 50
+# Small claims keep each lease short: 10 companies at concurrency 3 finish well inside the
+# stale threshold even if every one hits the per-company timeout.
+QUEUE_BATCH = max(1, min(MAX_BATCH, int(os.environ.get("QUEUE_BATCH_SIZE", "10") or 10)))
+HEARTBEAT_SECONDS = 60
 PER_COMPANY_TIMEOUT = 90.0
 CONCURRENCY = 3
 
@@ -91,7 +99,19 @@ async def run_batch(
         state.update(running=False, finishedAt=_now())
 
 
-async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 100) -> None:
+async def _heartbeat(database_url: str, batch: list[dict[str, Any]], stop: asyncio.Event) -> None:
+    from . import queue as durable_queue
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), HEARTBEAT_SECONDS)
+        except asyncio.TimeoutError:
+            try:
+                await asyncio.to_thread(durable_queue.touch, database_url, batch)
+            except Exception as exc:  # a missed heartbeat only risks an early retry, never data loss
+                log.warning("queue heartbeat failed: %s", exc)
+
+
+async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 1000) -> None:
     """Drain ready durable queue work in bounded batches; safe to resume after restarts."""
     from . import queue as durable_queue
     if state["running"]:
@@ -104,6 +124,7 @@ async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 10
         async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
             fetcher = HttpFetcher(client, user_agent)
             wikidata = make_wikidata_lookup(client, user_agent)
+            osm = make_osm_lookup(client, user_agent)
             gate = asyncio.Semaphore(CONCURRENCY)
 
             async def work(record: dict[str, Any]) -> None:
@@ -112,10 +133,16 @@ async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 10
                     return
                 async with gate:
                     try:
-                        data = await asyncio.wait_for(enrich_company(record, fetcher, wikidata), PER_COMPANY_TIMEOUT)
+                        data = await asyncio.wait_for(
+                            enrich_company(record, fetcher, wikidata, osm=osm), PER_COMPANY_TIMEOUT)
                         data["enrichmentVersion"] = ENRICHMENT_VERSION
                         await asyncio.to_thread(store.save_one, database_url, key, data)
-                        await asyncio.to_thread(durable_queue.mark_done, database_url, record)
+                        if data.get("discoveryComplete", True):
+                            await asyncio.to_thread(durable_queue.mark_done, database_url, record)
+                        else:
+                            # Do not claim "done" when a source failed: retry within the bounded attempts.
+                            reason = "; ".join(data.get("sourceErrors") or []) or "registry website unreachable"
+                            raise RuntimeError(f"discovery inconclusive: {reason}")
                     except Exception as exc:
                         state["failed"] += 1
                         state["lastError"] = f"{type(exc).__name__}: {str(exc)[:160]}"
@@ -128,13 +155,36 @@ async def run_queue(*, database_url: str, user_agent: str, max_batches: int = 10
                     if data.get("b2cWebsite"):
                         state["b2cMatches"] += 1
 
-            for _ in range(max(1, min(max_batches, 100))):
-                batch = await asyncio.to_thread(durable_queue.claim_batch, database_url, MAX_BATCH)
+            for _ in range(max(1, max_batches)):
+                batch = await asyncio.to_thread(durable_queue.claim_batch, database_url, QUEUE_BATCH)
                 if not batch:
                     break
                 state["target"] += len(batch)
-                await asyncio.gather(*(work(record) for record in batch))
+                stop = asyncio.Event()
+                beat = asyncio.create_task(_heartbeat(database_url, batch, stop))
+                try:
+                    await asyncio.gather(*(work(record) for record in batch))
+                finally:
+                    stop.set()
+                    await beat
     except Exception as exc:
+        log.exception("queue worker stopped")
         state["lastError"] = f"{type(exc).__name__}: {str(exc)[:200]}"
     finally:
         state.update(running=False, finishedAt=_now())
+
+
+async def resume_if_needed(*, database_url: str, user_agent: str) -> bool:
+    """Start the worker when ready work exists and none is running. Used by startup and /status so
+    a restart or a Render wake-up continues the backlog without a manual token call."""
+    from . import queue as durable_queue
+    if state["running"] or not database_url:
+        return False
+    try:
+        if not await asyncio.to_thread(durable_queue.has_ready_work, database_url):
+            return False
+    except Exception as exc:
+        log.warning("queue check failed: %s", exc)
+        return False
+    asyncio.create_task(run_queue(database_url=database_url, user_agent=user_agent))
+    return True

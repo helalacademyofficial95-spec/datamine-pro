@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { BookmarkPlus, RotateCcw, Table2, Trash2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
-import { countActiveFilters, filterCompanies } from "@/lib/filters";
+import { categoryOptions, countActiveFilters, filterCompanies } from "@/lib/filters";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterPanel } from "./FilterPanel";
@@ -13,6 +13,7 @@ export function FiltersView() {
   const { companies, filters, setFilters, resetFilters, presets, savePreset, deletePreset, showToast } = useApp();
   const [name, setName] = useState("");
 
+  const categories = useMemo(() => categoryOptions(companies), [companies]);
   const matches = useMemo(() => filterCompanies(companies, filters).length, [companies, filters]);
   const active = countActiveFilters(filters);
 
@@ -44,7 +45,7 @@ export function FiltersView() {
               <RotateCcw className="h-4 w-4" aria-hidden /> Reset all
             </button>
           </div>
-          <FilterPanel filters={filters} onChange={setFilters} />
+          <FilterPanel filters={filters} onChange={setFilters} categories={categories} />
           <div className="mt-6 flex items-center justify-between rounded-xl bg-brand/10 px-4 py-3 text-sm">
             <span className="text-muted">{active} active filter{active === 1 ? "" : "s"}</span>
             <span><strong className="text-lg">{matches}</strong> <span className="text-muted">of {companies.length} sample records match</span></span>

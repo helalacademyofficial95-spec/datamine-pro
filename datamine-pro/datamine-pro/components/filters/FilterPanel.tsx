@@ -8,10 +8,12 @@ interface Props {
   onChange: (next: CompanyFilters) => void;
   /** Hide the search box when the page already has its own */
   showSearch?: boolean;
+  /** Distinct business categories present in the data */
+  categories?: string[];
 }
 
 /** The same filter form is used on the Extracted Companies page and the Data Filters page. */
-export function FilterPanel({ filters, onChange, showSearch = true }: Props) {
+export function FilterPanel({ filters, onChange, showSearch = true, categories = [] }: Props) {
   const set = <K extends keyof CompanyFilters>(key: K, value: CompanyFilters[K]) => onChange({ ...filters, [key]: value });
 
   return (
@@ -93,6 +95,42 @@ export function FilterPanel({ filters, onChange, showSearch = true }: Props) {
           <option value="all">Any</option>
           <option value="yes">Has B2C website</option>
           <option value="no">No B2C website</option>
+        </select>
+      </div>
+      <div>
+        <label htmlFor="f-site" className="label">Official website</label>
+        <select id="f-site" className="field" value={filters.hasWebsite} onChange={(e) => set("hasWebsite", e.target.value as CompanyFilters["hasWebsite"])}>
+          <option value="all">Any</option>
+          <option value="yes">Has website</option>
+          <option value="no">No website</option>
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="f-email" className="label">Email</label>
+        <select id="f-email" className="field" value={filters.hasEmail} onChange={(e) => set("hasEmail", e.target.value as CompanyFilters["hasEmail"])}>
+          <option value="all">Any</option>
+          <option value="yes">Has email</option>
+          <option value="no">No email</option>
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="f-phone" className="label">Phone</label>
+        <select id="f-phone" className="field" value={filters.hasPhone} onChange={(e) => set("hasPhone", e.target.value as CompanyFilters["hasPhone"])}>
+          <option value="all">Any</option>
+          <option value="yes">Has phone</option>
+          <option value="no">No phone</option>
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="f-cat" className="label">Business category</label>
+        <select id="f-cat" className="field" value={filters.category} onChange={(e) => set("category", e.target.value)}>
+          <option value="all">All categories</option>
+          {categories.map((name) => (
+            <option key={name} value={name}>{name}</option>
+          ))}
         </select>
       </div>
     </div>

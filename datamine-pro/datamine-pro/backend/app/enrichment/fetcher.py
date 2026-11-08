@@ -15,7 +15,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
-from .discovery import parse_wikidata_text, wikidata_url
+from .discovery import osm_search_url, parse_osm_response, parse_wikidata_text, wikidata_url
 from .pipeline import FetchedPage
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
@@ -153,6 +153,10 @@ class HttpFetcher:
         return None
 
 
+class LookupFailed(Exception):
+    """An external discovery source failed (as opposed to legitimately finding nothing)."""
+
+
 def make_wikidata_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[str], Awaitable[list[str]]]:
     """Free, keyless Wikidata SPARQL lookup (official website by SIREN). Serialised: one query at a time."""
     gate = asyncio.Semaphore(1)
@@ -165,9 +169,43 @@ def make_wikidata_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable
                     headers={"User-Agent": user_agent, "Accept": "application/sparql-results+json"},
                     timeout=15.0,
                 )
-            except httpx.HTTPError:
-                return []
+            except httpx.HTTPError as exc:
+                raise LookupFailed(f"wikidata unreachable: {type(exc).__name__}") from exc
             await asyncio.sleep(0.5)
-            return parse_wikidata_text(response.text) if response.status_code == 200 else []
+            if response.status_code != 200:
+                raise LookupFailed(f"wikidata HTTP {response.status_code}")
+            return parse_wikidata_text(response.text)
+
+    return lookup
+
+
+def make_osm_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[dict], Awaitable[list[str]]]:
+    """OpenStreetMap Nominatim lookup. Public-instance policy: identified User-Agent, at most one
+    request per second, no bulk hammering - so queries are strictly serialised and spaced."""
+    from .verify import _postal_and_city  # local import: avoids a module cycle
+
+    gate = asyncio.Semaphore(1)
+
+    async def lookup(company: dict) -> list[str]:
+        name = str(company.get("name") or "")
+        postal, city = _postal_and_city(str(company.get("address") or ""))
+        if not name or not (postal or city):
+            return []
+        async with gate:
+            try:
+                response = await client.get(
+                    osm_search_url(name, postal, city),
+                    headers={"User-Agent": user_agent, "Accept": "application/json"},
+                    timeout=15.0,
+                )
+            except httpx.HTTPError as exc:
+                raise LookupFailed(f"openstreetmap unreachable: {type(exc).__name__}") from exc
+            await asyncio.sleep(1.1)
+            if response.status_code != 200:
+                raise LookupFailed(f"openstreetmap HTTP {response.status_code}")
+            try:
+                return parse_osm_response(response.json(), name)
+            except ValueError as exc:
+                raise LookupFailed("openstreetmap returned invalid JSON") from exc
 
     return lookup
