@@ -184,7 +184,14 @@ async def enrich_company(
             c["source"] == "registry" and c["outcome"] == "unreachable_or_not_permitted"
             for c in result["candidatesChecked"]
         )
-        if result["sourceErrors"] or registry_unreached:
+        # Wikidata currently returns HTTP 403 from this hosting environment. Retrying the
+        # same blocked public endpoint cannot improve this record; keep the error for audit,
+        # but allow OSM + verified domain candidates to complete without exhausting retries.
+        blocking_errors = [
+            error for error in result["sourceErrors"]
+            if not re.match(r"wikidata HTTP 403$", error.strip(), re.I)
+        ]
+        if blocking_errors or registry_unreached:
             result["discoveryComplete"] = False
         if weak:
             result["officialWebsiteStatus"] = UNVERIFIED
