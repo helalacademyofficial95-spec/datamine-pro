@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.enrichment import NOT_FOUND, VERIFIED, runner  # noqa: E402
 from app.enrichment.discovery import osm_search_url, parse_osm_response  # noqa: E402
 from app.enrichment.pipeline import FetchedPage, enrich_company  # noqa: E402
+from app.enrichment.verify import _postal_and_city  # noqa: E402
 
 TODAY = date(2026, 11, 6)
 COMPANY = {"name": "MAISON LILAS", "siren": "123456789", "country": "France",
@@ -55,7 +56,14 @@ def test_osm_parser_requires_name_overlap_and_ignores_unrelated_places():
     ]
     assert parse_osm_response(payload, "MAISON LILAS") == ["https://lilas.example"]
     assert parse_osm_response("garbage", "MAISON LILAS") == []
-    assert "countrycodes=fr" in osm_search_url("MAISON LILAS", "69001", "LYON")
+    assert "countrycodes=fr" in osm_search_url("MAISON LILAS", "69001", "LYON", "France")
+    assert "countrycodes=be" in osm_search_url("MAISON LILAS", "1000", "BRUSSELS", "Belgium")
+    assert "countrycodes=lu" in osm_search_url("MAISON LILAS", "1000", "LUXEMBOURG", "Luxembourg")
+
+
+def test_postal_city_parser_supports_be_and_lu_four_digit_codes():
+    assert _postal_and_city("Rue Example 1000 Brussels") == ("1000", "brussels")
+    assert _postal_and_city("Rue Example 1000 Luxembourg") == ("1000", "luxembourg")
 
 
 def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
@@ -65,6 +73,16 @@ def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
     r = run(enrich_company(COMPANY, Web({}), wikidata=broken, today=TODAY))
     assert r["officialWebsiteStatus"] == NOT_FOUND
     assert r["discoveryComplete"] is False and "wikidata HTTP 503" in r["sourceErrors"][0]
+
+
+
+def test_wikidata_403_is_recorded_but_does_not_block_other_discovery():
+    async def blocked(siren):
+        raise RuntimeError("wikidata HTTP 403")
+
+    r = run(enrich_company(COMPANY, Web({}), wikidata=blocked, today=TODAY))
+    assert r["discoveryComplete"] is True
+    assert r["sourceErrors"] == ["wikidata HTTP 403"]
 
 
 def test_clean_not_found_is_conclusive():

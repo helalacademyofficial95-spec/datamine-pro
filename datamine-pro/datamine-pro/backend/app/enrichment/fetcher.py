@@ -194,7 +194,7 @@ def make_osm_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[dic
         async with gate:
             try:
                 response = await client.get(
-                    osm_search_url(name, postal, city),
+                    osm_search_url(name, postal, city, str(company.get('country') or 'France')),
                     headers={"User-Agent": user_agent, "Accept": "application/json"},
                     timeout=15.0,
                 )

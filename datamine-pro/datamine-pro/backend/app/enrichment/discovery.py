@@ -143,11 +143,14 @@ def parse_wikidata_text(text: str) -> list[str]:
 NOMINATIM_ENDPOINT = "https://nominatim.openstreetmap.org/search"
 
 
-def osm_search_url(name: str, postal: str, city: str) -> str:
-    """Nominatim query for a place by name and postcode/city, restricted to France, with extra tags."""
+def osm_search_url(name: str, postal: str, city: str, country: str = "France") -> str:
+    """Nominatim query scoped to the company's country when it is one of our supported markets."""
     query = " ".join(part for part in (name_variants(name)[0] if name_variants(name) else name, postal, city) if part)
+    country_code = {"france": "fr", "belgium": "be", "belgië": "be", "belgique": "be",
+                    "luxembourg": "lu"}.get((country or "").strip().lower())
+    country_filter = f"&countrycodes={country_code}" if country_code else ""
     return (
-        f"{NOMINATIM_ENDPOINT}?q={quote(query)}&format=jsonv2&extratags=1&limit=3&countrycodes=fr"
+        f"{NOMINATIM_ENDPOINT}?q={quote(query)}&format=jsonv2&extratags=1&limit=3{country_filter}"
     )
 
 
