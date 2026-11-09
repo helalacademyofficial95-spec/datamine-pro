@@ -101,6 +101,25 @@ def build_router(
         background_tasks.add_task(runner.run_queue, database_url=database_url, user_agent=user_agent)
         return {"started": True, "batchSize": runner.QUEUE_BATCH}
 
+
+    @router.post("/queue/reprocess-outdated", status_code=202)
+    async def reprocess_outdated(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
+        """Re-run records produced by an older enrichment pipeline without deleting their data."""
+        if not admin_token:
+            raise HTTPException(status_code=503, detail="Enrichment is disabled: server admin token is not configured.")
+        if not token_ok(x_admin_token, admin_token):
+            raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
+        if not database_url:
+            raise HTTPException(status_code=503, detail="Persistent storage is not configured.")
+        count = await asyncio.to_thread(
+            durable_queue.requeue_outdated, database_url, runner.ENRICHMENT_VERSION
+        )
+        resumed = False
+        if count and not runner.state["running"]:
+            resumed = await runner.resume_if_needed(database_url=database_url, user_agent=user_agent)
+        return {"requeued": count, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": resumed}
+
+
     @router.post("/queue/requeue-failed", status_code=202)
     async def requeue_failed(x_admin_token: str | None = Header(default=None)) -> dict[str, Any]:
         if not admin_token:
