@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, RotateCcw, Search, SearchX, SlidersHorizontal } from "lucide-react";
 import { useApp } from "@/context/AppContext";
-import { categoryOptions, countActiveFilters, filterCompanies, sortCompanies } from "@/lib/filters";
+import { categoryOf, categoryOptions, countActiveFilters, filterCompanies, sortCompanies } from "@/lib/filters";
 import type { SortDir, SortKey } from "@/lib/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { DemoNotice } from "@/components/ui/DemoNotice";
@@ -230,7 +230,7 @@ export function CompaniesView() {
                         )}
                         {c.origin === "sample" && <SampleBadge label="Sample" />}
                       </div>
-                      {c.nafLabel && <div className="text-xs text-muted">{c.nafLabel}</div>}
+                      {categoryOf(c) && <div className="text-xs text-muted">{categoryOf(c)}</div>}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">{c.director || <span className="text-muted">Not Found</span>}</td>
                     <td className="px-3 py-3 text-muted">{c.email || "Not Found"}</td>

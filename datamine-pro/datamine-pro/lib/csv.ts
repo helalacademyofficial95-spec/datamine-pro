@@ -1,3 +1,4 @@
+import { categoryOf } from "./filters";
 import type { Company } from "./types";
 
 /** Columns written to CSV / Excel files, in order. */
@@ -43,7 +44,7 @@ export const EXPORT_COLUMNS: ExportColumn[] = [
   { header: "Registry Source URL", width: 44, value: (c) => c.registryUrl ?? "" },
   { header: "Verification Status", width: 20, value: (c) => c.verification },
   { header: "Data Origin", width: 16, value: (c) => (c.origin === "sample" ? "SAMPLE DATA" : "Extracted") },
-  { header: "Business Category", width: 40, value: (c) => c.nafLabel ?? "" },
+  { header: "Business Category", width: 40, value: (c) => categoryOf(c) },
 ];
 
 const PHONE_LIKE = /^[+-]?[\d\s().-]+$/;

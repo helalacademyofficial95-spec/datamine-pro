@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildCsv, EXPORT_COLUMNS } from "../lib/csv.ts";
-import { DEFAULT_FILTERS, categoryOptions, countActiveFilters, filterCompanies } from "../lib/filters.ts";
+import { DEFAULT_FILTERS, categoryOf, categoryOptions, countActiveFilters, filterCompanies } from "../lib/filters.ts";
 
 const base = {
   id: "1", name: "MAISON LILAS", siren: "123456789", director: "Anne Martin", email: "", phone: "",
@@ -54,4 +54,16 @@ test("old saved presets without the new keys still work", () => {
   assert.equal(filterCompanies(rows, legacy).length, 2);
   assert.equal(countActiveFilters(legacy), 0);
   assert.deepEqual(categoryOptions(rows), ["Commerce de détail"]);
+});
+
+test("category comes from the NAF code when the registry gives no label", () => {
+  const retail = { ...base, id: "3", nafCode: "47.11F", nafLabel: "" } as any;
+  const labelled = { ...base, id: "4", nafCode: "10.71C", nafLabel: "Boulangerie et boulangerie-pâtisserie" } as any;
+  const none = { ...base, id: "5", nafCode: "", nafLabel: "" } as any;
+  assert.equal(categoryOf(retail), "Retail trade (NAF 47)");
+  assert.equal(categoryOf(labelled), "Boulangerie et boulangerie-pâtisserie");
+  assert.equal(categoryOf(none), "");
+  const all = [retail, labelled, none];
+  assert.deepEqual(filterCompanies(all, { ...DEFAULT_FILTERS, category: "Retail trade (NAF 47)" }).map((c: any) => c.id), ["3"]);
+  assert.ok(buildCsv([retail]).includes("Retail trade (NAF 47)"));
 });

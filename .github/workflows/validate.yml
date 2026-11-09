@@ -43,7 +43,7 @@ jobs:
           node-version: "22"
       - name: Run filter and export tests
         working-directory: datamine-pro/datamine-pro
-        run: node --experimental-strip-types --no-warnings --test tests/frontend.test.mts
+        run: node --experimental-strip-types --no-warnings --import ./tests/register-ts.mjs --test tests/frontend.test.mts
 
   frontend:
     name: Frontend typecheck and production build
