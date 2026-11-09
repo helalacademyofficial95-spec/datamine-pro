@@ -157,6 +157,35 @@ def touch(database_url: str, records: list[dict[str, Any]]) -> int:
     return count
 
 
+def requeue_outdated(database_url: str, minimum_version: int) -> int:
+    """Requeue completed records from older pipeline versions without deleting stored data."""
+    version = max(1, int(minimum_version))
+    with _connect(database_url) as connection:
+        rows = connection.execute("""
+            SELECT q.country, q.registration_number
+            FROM enrichment_queue AS q
+            LEFT JOIN company_enrichment AS e
+              ON e.country = q.country
+             AND e.registration_number = q.registration_number
+            WHERE q.status <> 'processing'
+              AND (
+                COALESCE(e.data->>'enrichmentVersion', '0') <> %s
+                OR NOT COALESCE(e.data ? 'discoveryComplete', FALSE)
+              )
+        """, (str(version),)).fetchall()
+        count = 0
+        for country, number in rows:
+            count += max(connection.execute("""
+                UPDATE enrichment_queue
+                SET status='pending', attempts=0, cycles=0, last_error=NULL,
+                    available_at=NOW(), locked_at=NULL, updated_at=NOW()
+                WHERE country=%s AND registration_number=%s AND status <> 'processing'
+            """, (country, number)).rowcount, 0)
+    if count:
+        log.warning("requeued %s outdated enrichment records for pipeline version %s", count, version)
+    return count
+
+
 def requeue_failed(database_url: str) -> int:
     """Explicit operator action: give failed rows a fresh set of bounded attempts."""
     with _connect(database_url) as connection:
