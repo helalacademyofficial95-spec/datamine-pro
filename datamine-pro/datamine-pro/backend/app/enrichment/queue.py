@@ -57,8 +57,7 @@ def init_table(database_url: str) -> None:
         """)
 
 
-def enqueue_records(database_url: str, records: list[dict[str, Any]]) -> int:
-    """Add eligible records without resetting completed or currently-running work."""
+def enqueue_records(database_url: str, records: list[dict[str, Any]]) -> int:    """Add eligible records without resetting completed or currently-running work."""
     inserted = 0
     with _connect(database_url) as connection:
         for record in records:
@@ -117,8 +116,7 @@ def recover_stale(database_url: str, stale_minutes: int | None = None) -> dict[s
 
 def claim_batch(database_url: str, limit: int) -> list[dict[str, Any]]:
     """Atomically claim a bounded batch (stale leases are recovered first)."""
-    recover_stale(database_url)
-    with _connect(database_url) as connection:
+    recover_stale(database_url)    with _connect(database_url) as connection:
         rows = connection.execute("""
             WITH candidates AS (
                 SELECT country, registration_number
@@ -158,7 +156,7 @@ def touch(database_url: str, records: list[dict[str, Any]]) -> int:
 
 
 def requeue_outdated(database_url: str, minimum_version: int) -> int:
-    """Requeue records created by older enrichment pipelines without deleting stored data."""
+    """Requeue completed records from older pipeline versions without deleting stored data."""
     version = max(1, int(minimum_version))
     with _connect(database_url) as connection:
         rows = connection.execute("""
@@ -191,8 +189,7 @@ def has_ready_work(database_url: str) -> bool:
                OR (status='failed' AND cycles < %s AND COALESCE(last_error, '') NOT LIKE %s
                    AND updated_at < NOW() - (%s * INTERVAL '1 minute'))
             LIMIT 1
-        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()
-    return row is not None
+        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()    return row is not None
 
 
 def mark_done(database_url: str, record: dict[str, Any]) -> None:
@@ -251,11 +248,9 @@ def queue_status(database_url: str) -> dict[str, Any]:
     result["stale"] = int(stale)
     result["failedByCause"] = [{"cause": c[0], "count": int(c[1])} for c in causes]
     result["recentErrors"] = [
-        {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}
-        for e in errors
+        {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}        for e in errors
     ]
     return result
-
                         THEN (e.data->>'enrichmentVersion')::integer
                         ELSE NULL
                     END,
@@ -297,8 +292,7 @@ def has_ready_work(database_url: str) -> bool:
                OR (status='failed' AND cycles < %s AND COALESCE(last_error, '') NOT LIKE %s
                    AND updated_at < NOW() - (%s * INTERVAL '1 minute'))
             LIMIT 1
-        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()
-    return row is not None
+        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()    return row is not None
 
 
 def mark_done(database_url: str, record: dict[str, Any]) -> None:
@@ -357,7 +351,6 @@ def queue_status(database_url: str) -> dict[str, Any]:
     result["stale"] = int(stale)
     result["failedByCause"] = [{"cause": c[0], "count": int(c[1])} for c in causes]
     result["recentErrors"] = [
-        {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}
-        for e in errors
+        {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}        for e in errors
     ]
     return result
