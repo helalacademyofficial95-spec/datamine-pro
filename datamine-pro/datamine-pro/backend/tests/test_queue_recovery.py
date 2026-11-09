@@ -77,12 +77,28 @@ def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
 
 
 def test_wikidata_403_is_recorded_but_does_not_block_other_discovery():
+    from app.enrichment.fetcher import LookupFailed
+
     async def blocked(siren):
-        raise RuntimeError("wikidata HTTP 403")
+        raise LookupFailed("wikidata HTTP 403", permanent=True)
 
     r = run(enrich_company(COMPANY, Web({}), wikidata=blocked, today=TODAY))
-    assert r["discoveryComplete"] is True
-    assert r["sourceErrors"] == ["wikidata HTTP 403"]
+    assert r["discoveryComplete"] is True and r["sourceErrors"] == []
+    assert r["sourcesBlocked"] == ["wikidata HTTP 403"]
+    assert "not evidence" in r["b2cExplanation"]
+
+
+def test_transient_osm_failure_is_retryable_but_osm_403_is_not():
+    from app.enrichment.fetcher import LookupFailed
+
+    async def busy(company):
+        raise LookupFailed("openstreetmap HTTP 429")
+
+    async def refused(company):
+        raise LookupFailed("openstreetmap HTTP 403", permanent=True)
+
+    assert run(enrich_company(COMPANY, Web({}), osm=busy, today=TODAY))["discoveryComplete"] is False
+    assert run(enrich_company(COMPANY, Web({}), osm=refused, today=TODAY))["discoveryComplete"] is True
 
 
 def test_clean_not_found_is_conclusive():
@@ -216,3 +232,127 @@ def test_stale_recovery_sql_is_safe_and_bounded():
         state = dict(c.execute("SELECT registration_number, status FROM enrichment_queue WHERE country='ZZ'").fetchall())
         c.execute("DELETE FROM enrichment_queue WHERE country='ZZ'")
     assert state == {"1": "pending", "2": "failed", "3": "processing", "4": "pending", "5": "done"}
+
+
+# ---- country support -----------------------------------------------------------------------
+def test_osm_url_is_scoped_per_country_and_postcodes_may_have_four_digits():
+    from app.enrichment.verify import _postal_and_city
+
+    assert "countrycodes=be" in osm_search_url("ATELIER ROSE", "1000", "BRUXELLES", "Belgium")
+    assert "countrycodes=lu" in osm_search_url("ATELIER ROSE", "L-1111", "LUXEMBOURG", "Luxembourg")
+    assert "countrycodes=fr" in osm_search_url("ATELIER ROSE", "69001", "LYON", "France")
+    assert _postal_and_city("Rue Neuve 12, 1000 Bruxelles")[0] == "1000"
+    assert _postal_and_city("12 rue Exemple, 1111 Luxembourg")[0] == "1111"
+    assert _postal_and_city("5 place du Marche 69001 LYON")[0] == "69001"
+
+
+def test_belgian_enterprise_number_verifies_a_belgian_site():
+    be = {"name": "ATELIER ROSE", "country": "Belgium", "registrationNumber": "0123.456.789",
+          "address": "Rue Neuve 12, 1000 Bruxelles", "website": ""}
+    legal = "<html><title>Mentions légales</title><body>Atelier Rose SRL, Rue Neuve 12, 1000 Bruxelles. BCE 0123.456.789</body></html>"
+    home = SHOP.replace("Maison Lilas", "Atelier Rose")
+
+    async def osm(company):
+        return ["https://atelierrose.be"]
+
+    web = Web({"https://atelierrose.be": home, "https://atelierrose.be/mentions-legales": legal})
+    r = run(enrich_company(be, web, osm=osm, today=TODAY))
+    assert r["officialWebsiteStatus"] == VERIFIED
+    assert any(e["type"] == "registration_number" and "BE_ENTERPRISE" in e["detail"] for e in r["officialWebsiteEvidence"])
+
+
+def test_luxembourg_rcs_number_is_recognised_and_french_siren_is_not_assumed():
+    from app.enrichment.verify import find_registration_number, registration_ids
+
+    lu = {"name": "ATELIER ROSE", "country": "Luxembourg", "rcsNumber": "B123456"}
+    assert registration_ids(lu).get("lu_rcs") == "123456" and "siren" not in registration_ids(lu)
+    assert find_registration_number(lu, "RCS Luxembourg B 123456") == "lu_rcs"
+    assert find_registration_number(lu, "RCS Luxembourg B 999999") is None
+
+
+# ---- source fetching: bounded backoff, permanent refusals ------------------------------------
+def _client(statuses):
+    httpx = pytest.importorskip("httpx")
+    if not hasattr(httpx, "MockTransport"):
+        pytest.skip("real httpx required")
+    calls = {"n": 0}
+
+    def handler(request):
+        i = min(calls["n"], len(statuses) - 1)
+        calls["n"] += 1
+        return httpx.Response(statuses[i], text="[]")
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler)), calls
+
+
+def test_transient_429_is_retried_then_succeeds(monkeypatch):
+    from app.enrichment import fetcher
+
+    async def nosleep(_):
+        return None
+
+    monkeypatch.setattr(fetcher.asyncio, "sleep", nosleep)
+    client, calls = _client([429, 503, 200])
+    resp = run(fetcher._get_source(client, "openstreetmap", "https://x.test/", {}, 0))
+    assert resp.status_code == 200 and calls["n"] == 3
+
+
+def test_persistent_503_raises_transient_after_bounded_tries(monkeypatch):
+    from app.enrichment import fetcher
+
+    async def nosleep(_):
+        return None
+
+    monkeypatch.setattr(fetcher.asyncio, "sleep", nosleep)
+    client, calls = _client([503])
+    with pytest.raises(fetcher.LookupFailed) as err:
+        run(fetcher._get_source(client, "openstreetmap", "https://x.test/", {}, 0))
+    assert err.value.permanent is False and calls["n"] == 3
+
+
+def test_403_is_permanent_and_not_retried():
+    from app.enrichment import fetcher
+
+    client, calls = _client([403])
+    with pytest.raises(fetcher.LookupFailed) as err:
+        run(fetcher._get_source(client, "wikidata", "https://x.test/", {}, 0))
+    assert err.value.permanent is True and calls["n"] == 1
+
+
+# ---- real SQL: transient auto-retry, permanent failures, dedupe ------------------------------
+@pytest.mark.skipif(not DB, reason="TEST_DATABASE_URL not set")
+def test_failed_rows_retry_only_when_transient_and_bounded_and_enqueue_dedupes():
+    psycopg = pytest.importorskip("psycopg")
+    from app.enrichment import queue as q
+
+    q.init_table(DB)
+    with psycopg.connect(DB) as c:
+        c.execute("DELETE FROM enrichment_queue WHERE country='ZY'")
+        for number, err, cycles in [("1", "discovery inconclusive: wikidata HTTP 503", 0),
+                                    ("2", "permanent: bad record", 0),
+                                    ("3", "discovery inconclusive: openstreetmap HTTP 429", 3)]:
+            c.execute("""INSERT INTO enrichment_queue (country, registration_number, record, status, attempts, last_error,
+                                                       cycles, updated_at)
+                         VALUES ('ZY', %s, '{}'::jsonb, 'failed', 3, %s, %s, NOW() - INTERVAL '2 hours')""",
+                      (number, err, cycles))
+    assert q.has_ready_work(DB) is True
+    out = q.recover_stale(DB)
+    assert out["retried"] >= 1
+    with psycopg.connect(DB) as c:
+        state = {r[0]: (r[1], r[2]) for r in c.execute(
+            "SELECT registration_number, status, cycles FROM enrichment_queue WHERE country='ZY'").fetchall()}
+    assert state["1"] == ("pending", 1)          # transient: retried
+    assert state["2"] == ("failed", 0)           # permanent: left visible
+    assert state["3"] == ("failed", 3)           # retry cycles exhausted
+    # duplicates are never created, and a done row is not reset
+    rec = {"country": "ZY", "siren": "900000001"}
+    q.enqueue_records(DB, [rec])
+    q.enqueue_records(DB, [rec])
+    q.mark_done(DB, rec)
+    q.enqueue_records(DB, [rec])
+    with psycopg.connect(DB) as c:
+        rows = c.execute("SELECT status FROM enrichment_queue WHERE country='ZY' AND registration_number='900000001'").fetchall()
+        status = q.queue_status(DB)
+        c.execute("DELETE FROM enrichment_queue WHERE country='ZY'")
+    assert rows == [("done",)]
+    assert any(item["count"] >= 1 for item in status["failedByCause"])
