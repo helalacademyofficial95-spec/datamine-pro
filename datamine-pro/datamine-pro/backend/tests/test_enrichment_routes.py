@@ -94,8 +94,8 @@ def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monk
     monkeypatch.setattr(runner, "resume_if_needed", fake_resume_if_needed)
 
     c = client()
-    assert c.post("/queue/reprocess-outdated").status_code == 401
-    response = c.post("/queue/reprocess-outdated", headers={"X-Admin-Token": "s3cret"})
+    assert c.post("/enrichment/queue/reprocess-outdated").status_code == 401
+    response = c.post("/enrichment/queue/reprocess-outdated", headers={"X-Admin-Token": "s3cret"})
     assert response.status_code == 202
     assert response.json() == {"requeued": 12, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": True}
     assert requeued == [("postgres://x", runner.ENRICHMENT_VERSION)]
