@@ -158,7 +158,7 @@ def touch(database_url: str, records: list[dict[str, Any]]) -> int:
 
 
 def requeue_outdated(database_url: str, minimum_version: int) -> int:
-    """Requeue completed records from older pipeline versions without deleting stored data."""
+    """Requeue records created by older enrichment pipelines without deleting stored data."""
     version = max(1, int(minimum_version))
     with _connect(database_url) as connection:
         rows = connection.execute("""
@@ -170,8 +170,8 @@ def requeue_outdated(database_url: str, minimum_version: int) -> int:
             WHERE q.status <> 'processing'
               AND (
                 COALESCE(
-                  CASE
-                    WHEN COALESCE(e.data->>'enrichmentVersion', '') ~ '^[0-9]+
+                    CASE
+                        WHEN COALESCE(e.data->>'enrichmentVersion', '') ~ '^[0-9]+
     """Explicit operator action: give failed rows a fresh set of bounded attempts."""
     with _connect(database_url) as connection:
         n = connection.execute("""
@@ -256,10 +256,10 @@ def queue_status(database_url: str) -> dict[str, Any]:
     ]
     return result
 
-                    THEN (e.data->>'enrichmentVersion')::integer
-                    ELSE NULL
-                  END,
-                  0
+                        THEN (e.data->>'enrichmentVersion')::integer
+                        ELSE NULL
+                    END,
+                    0
                 ) < %s
                 OR NOT COALESCE(e.data ? 'discoveryComplete', FALSE)
               )
