@@ -8,7 +8,7 @@ Design rules (see docs in each module):
   Python standard library so it is cheap on free hosting and testable offline.
 """
 
-ENRICHMENT_VERSION = 1
+ENRICHMENT_VERSION = 2
 
 # Per-field verification vocabulary shared by backend and frontend.
 VERIFIED = "Verified"
