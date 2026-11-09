@@ -57,7 +57,7 @@ def find_registration_number(company: dict[str, Any], text: str) -> str | None:
 
 
 def _postal_and_city(address: str) -> tuple[str, str]:
-    matches = list(re.finditer(r"\b(\d{5})\b\s*([^\d,]*)", address or ""))
+    matches = list(re.finditer(r"\b(\d{4,5})\b\s*([^\d,]*)", address or ""))
     if not matches:
         return "", ""
     last = matches[-1]
