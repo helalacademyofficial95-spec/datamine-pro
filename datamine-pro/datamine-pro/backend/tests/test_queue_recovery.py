@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.enrichment import NOT_FOUND, VERIFIED, runner  # noqa: E402
 from app.enrichment.discovery import osm_search_url, parse_osm_response  # noqa: E402
 from app.enrichment.pipeline import FetchedPage, enrich_company  # noqa: E402
+from app.enrichment.verify import _postal_and_city  # noqa: E402
 
 TODAY = date(2026, 11, 6)
 COMPANY = {"name": "MAISON LILAS", "siren": "123456789", "country": "France",
@@ -58,6 +59,11 @@ def test_osm_parser_requires_name_overlap_and_ignores_unrelated_places():
     assert "countrycodes=fr" in osm_search_url("MAISON LILAS", "69001", "LYON", "France")
     assert "countrycodes=be" in osm_search_url("MAISON LILAS", "1000", "BRUSSELS", "Belgium")
     assert "countrycodes=lu" in osm_search_url("MAISON LILAS", "1000", "LUXEMBOURG", "Luxembourg")
+
+
+def test_postal_city_parser_supports_be_and_lu_four_digit_codes():
+    assert _postal_and_city("Rue Example 1000 Brussels") == ("1000", "brussels")
+    assert _postal_and_city("Rue Example 1000 Luxembourg") == ("1000", "luxembourg")
 
 
 def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
