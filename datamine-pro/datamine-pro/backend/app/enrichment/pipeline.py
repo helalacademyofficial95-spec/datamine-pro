@@ -121,7 +121,7 @@ async def _candidate_urls(
                 add(site, "openstreetmap")
         except Exception as exc:
             _record_source_failure(exc, errors, blocked)
-    for guess in guess_domains(str(company.get("name") or "")):
+    for guess in guess_domains(str(company.get("name") or ""), country=str(company.get("country") or "")):
         add(guess, "domain_guess")
     return candidates
 

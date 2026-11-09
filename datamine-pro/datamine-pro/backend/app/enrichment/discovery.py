@@ -22,6 +22,13 @@ from .text import core_tokens, host_matches, name_variants
 
 WIKIDATA_ENDPOINT = "https://query.wikidata.org/sparql"
 DEFAULT_TLDS = ("fr", "com")
+COUNTRY_TLDS = {
+    "france": ("fr", "com", "eu"),
+    "belgium": ("be", "com", "eu"),
+    "belgique": ("be", "com", "eu"),
+    "belgië": ("be", "com", "eu"),
+    "luxembourg": ("lu", "com", "eu"),
+}
 MAX_GUESSES = 6
 
 # Hosts that are never a company's own website.
@@ -75,8 +82,19 @@ def normalize_website(raw: str) -> str:
     return f"{parsed.scheme.lower()}://{host}"
 
 
-def guess_domains(raw_name: str, tlds: tuple[str, ...] = DEFAULT_TLDS, limit: int = MAX_GUESSES) -> list[str]:
-    """Candidate domains from a registry name. Pure and deterministic; nothing is fetched here."""
+def guess_domains(
+    raw_name: str,
+    tlds: tuple[str, ...] | None = None,
+    limit: int = MAX_GUESSES,
+    country: str | None = None,
+) -> list[str]:
+    """Candidate domains from a registry name, preferring the company country TLD.
+
+    These are untrusted candidates only; the enrichment pipeline fetches and verifies each site
+    before reporting it. An explicit ``tlds`` argument preserves the original override behavior.
+    """
+    if tlds is None:
+        tlds = COUNTRY_TLDS.get((country or "").strip().lower(), DEFAULT_TLDS)
     slugs: list[str] = []
 
     def add(slug: str) -> None:

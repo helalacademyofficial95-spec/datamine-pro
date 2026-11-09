@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.enrichment import NOT_APPLICABLE, NOT_FOUND, PARTIAL, UNVERIFIED, VERIFIED  # noqa: E402
 from app.enrichment.pipeline import FetchedPage, enrich_company  # noqa: E402
+from app.enrichment.discovery import guess_domains  # noqa: E402
 
 TODAY = date(2026, 11, 6)
 
@@ -157,3 +158,16 @@ def test_company_without_registration_number_cannot_reach_verified():
     r = run(enrich_company(company, web, today=TODAY))
     assert r["officialWebsiteStatus"] != VERIFIED
     assert r["b2cStatus"] != VERIFIED
+
+
+
+def test_country_specific_domain_candidates_prioritise_local_tld():
+    belgium = guess_domains("MAISON LILAS", country="Belgium")
+    luxembourg = guess_domains("MAISON LILAS", country="Luxembourg")
+    france = guess_domains("MAISON LILAS", country="France")
+    assert belgium and all(".be" in url or ".com" in url or ".eu" in url for url in belgium)
+    assert belgium[0].endswith(".be")
+    assert luxembourg[0].endswith(".lu")
+    assert france[0].endswith(".fr")
+    assert "https://maisonlilas.be" in belgium
+    assert "https://maisonlilas.lu" in luxembourg
