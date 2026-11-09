@@ -157,6 +157,138 @@ def touch(database_url: str, records: list[dict[str, Any]]) -> int:
     return count
 
 
+
+def requeue_outdated(database_url: str, minimum_version: int) -> int:
+    """Requeue only completed records whose stored enrichment predates the current pipeline.
+
+    Extraction records and enrichment JSON are preserved until the worker writes a fresh result.
+    Currently-processing leases are left untouched.
+    """
+    version = max(1, int(minimum_version))
+    with _connect(database_url) as connection:
+        n = connection.execute("""
+            WITH outdated AS (
+                SELECT q.country, q.registration_number, q.record
+                FROM enrichment_queue AS q
+                LEFT JOIN company_enrichment AS e
+                  ON e.country = q.country
+                 AND e.registration_number = q.registration_number
+                WHERE q.status <> 'processing'
+                  AND (
+                    COALESCE(
+                      CASE
+                        WHEN COALESCE(e.data->>'enrichmentVersion', '') ~ '^[0-9]+    """Explicit operator action: give failed rows a fresh set of bounded attempts."""
+    with _connect(database_url) as connection:
+        n = connection.execute("""
+            UPDATE enrichment_queue
+            SET status='pending', attempts=0, available_at=NOW(), locked_at=NULL, updated_at=NOW()
+            WHERE status='failed'
+        """).rowcount
+    return max(n, 0)
+
+
+def has_ready_work(database_url: str) -> bool:
+    with _connect(database_url) as connection:
+        row = connection.execute("""
+            SELECT 1 FROM enrichment_queue
+            WHERE (status IN ('pending','failed') AND attempts < %s)
+               OR (status='processing' AND locked_at < NOW() - (%s * INTERVAL '1 minute'))
+               OR (status='failed' AND cycles < %s AND COALESCE(last_error, '') NOT LIKE %s
+                   AND updated_at < NOW() - (%s * INTERVAL '1 minute'))
+            LIMIT 1
+        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()
+    return row is not None
+
+
+def mark_done(database_url: str, record: dict[str, Any]) -> None:
+    key = record_key(record)
+    if not key:
+        return
+    with _connect(database_url) as connection:
+        connection.execute("""
+            UPDATE enrichment_queue
+            SET status='done', locked_at=NULL, last_error=NULL, updated_at=NOW()
+            WHERE country=%s AND registration_number=%s
+        """, key)
+
+
+def mark_failed(database_url: str, record: dict[str, Any], error: str, permanent: bool = False) -> None:
+    """Record a failure. Transient: retry with exponential backoff (30s, 60s, 120s... max 15 min)
+    until MAX_ATTEMPTS. Permanent: fail immediately with a "permanent:" reason that is never retried."""
+    key = record_key(record)
+    if not key:
+        return
+    log.warning("enrichment failed for %s (%s): %s", key, "permanent" if permanent else "transient", error[:200])
+    message = (PERMANENT_PREFIX + " " + error if permanent else error)[:500]
+    with _connect(database_url) as connection:
+        connection.execute("""
+            UPDATE enrichment_queue
+            SET status = CASE WHEN %s OR attempts >= %s THEN 'failed' ELSE 'pending' END,
+                available_at = NOW() + (LEAST(900, 30 * POWER(2, GREATEST(attempts,1) - 1)) * INTERVAL '1 second'),
+                locked_at=NULL, last_error=%s, updated_at=NOW()
+            WHERE country=%s AND registration_number=%s
+        """, (permanent, MAX_ATTEMPTS, message, key[0], key[1]))
+
+
+def queue_status(database_url: str) -> dict[str, Any]:
+    with _connect(database_url) as connection:
+        rows = connection.execute("""
+            SELECT status, COUNT(*) FROM enrichment_queue GROUP BY status
+        """).fetchall()
+        stale = connection.execute("""
+            SELECT COUNT(*) FROM enrichment_queue
+            WHERE status='processing' AND locked_at < NOW() - (%s * INTERVAL '1 minute')
+        """, (STALE_MINUTES,)).fetchone()[0]
+        errors = connection.execute("""
+            SELECT registration_number, country, status, attempts, LEFT(last_error, 200)
+            FROM enrichment_queue WHERE last_error IS NOT NULL
+            ORDER BY updated_at DESC LIMIT 5
+        """).fetchall()
+        causes = connection.execute("""
+            SELECT LEFT(COALESCE(last_error, 'no error recorded'), 70) AS cause, COUNT(*)
+            FROM enrichment_queue WHERE status='failed'
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 8
+        """).fetchall()
+    result: dict[str, Any] = {"pending": 0, "processing": 0, "done": 0, "failed": 0, "total": 0}
+    for status, count in rows:
+        result[status] = int(count)
+        result["total"] += int(count)
+    result["stale"] = int(stale)
+    result["failedByCause"] = [{"cause": c[0], "count": int(c[1])} for c in causes]
+    result["recentErrors"] = [
+        {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}
+        for e in errors
+    ]
+    return result
+
+                        THEN (e.data->>'enrichmentVersion')::integer
+                        ELSE NULL
+                      END,
+                      0
+                    ) < %s
+                    OR NOT COALESCE(e.data ? 'discoveryComplete', FALSE)
+                  )
+            )
+            UPDATE enrichment_queue AS q
+            SET record = outdated.record,
+                status = 'pending',
+                attempts = 0,
+                cycles = 0,
+                last_error = NULL,
+                available_at = NOW(),
+                locked_at = NULL,
+                updated_at = NOW()
+            FROM outdated
+            WHERE q.country = outdated.country
+              AND q.registration_number = outdated.registration_number
+            RETURNING q.country
+        """, (version,)).fetchall()
+    count = len(n)
+    if count:
+        log.warning("requeued %s outdated enrichment records for pipeline version %s", count, version)
+    return count
+
+
 def requeue_failed(database_url: str) -> int:
     """Explicit operator action: give failed rows a fresh set of bounded attempts."""
     with _connect(database_url) as connection:
