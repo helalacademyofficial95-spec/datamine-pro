@@ -55,7 +55,9 @@ def test_osm_parser_requires_name_overlap_and_ignores_unrelated_places():
     ]
     assert parse_osm_response(payload, "MAISON LILAS") == ["https://lilas.example"]
     assert parse_osm_response("garbage", "MAISON LILAS") == []
-    assert "countrycodes=fr" in osm_search_url("MAISON LILAS", "69001", "LYON")
+    assert "countrycodes=fr" in osm_search_url("MAISON LILAS", "69001", "LYON", "France")
+    assert "countrycodes=be" in osm_search_url("MAISON LILAS", "1000", "BRUSSELS", "Belgium")
+    assert "countrycodes=lu" in osm_search_url("MAISON LILAS", "1000", "LUXEMBOURG", "Luxembourg")
 
 
 def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
@@ -65,6 +67,16 @@ def test_failed_source_makes_discovery_inconclusive_not_a_clean_not_found():
     r = run(enrich_company(COMPANY, Web({}), wikidata=broken, today=TODAY))
     assert r["officialWebsiteStatus"] == NOT_FOUND
     assert r["discoveryComplete"] is False and "wikidata HTTP 503" in r["sourceErrors"][0]
+
+
+
+def test_wikidata_403_is_recorded_but_does_not_block_other_discovery():
+    async def blocked(siren):
+        raise RuntimeError("wikidata HTTP 403")
+
+    r = run(enrich_company(COMPANY, Web({}), wikidata=blocked, today=TODAY))
+    assert r["discoveryComplete"] is True
+    assert r["sourceErrors"] == ["wikidata HTTP 403"]
 
 
 def test_clean_not_found_is_conclusive():
