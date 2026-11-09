@@ -43,6 +43,18 @@ def registration_ids(company: dict[str, Any]) -> dict[str, str]:
         ids["siren"] = siren
     elif "siret" in ids:
         ids["siren"] = ids["siret"][:9]
+    # Belgium and Luxembourg do not use SIREN: look for their own national identifiers.
+    country = str(company.get("country") or "").strip().lower()
+    raw = " ".join(str(company.get(k) or "") for k in
+                   ("registrationNumber", "enterpriseNumber", "vatNumber", "rcsNumber", "sourceRecordId", "siren"))
+    if country in ("belgium", "belgique", "belgië"):
+        digits = re.sub(r"\D", "", raw)
+        if len(digits) == 10 and digits[0] in "01":  # KBO/BCE enterprise number (also the BE VAT number)
+            ids["be_enterprise"] = digits
+    elif country == "luxembourg":
+        match = re.search(r"\bB\s?(\d{3,7})\b", raw, re.I)  # RCS Luxembourg: B + digits
+        if match:
+            ids["lu_rcs"] = match.group(1)
     return ids
 
 
@@ -53,6 +65,10 @@ def find_registration_number(company: dict[str, Any], text: str) -> str | None:
         return "siret"
     if "siren" in ids and _number_pattern(ids["siren"], True).search(text):
         return "siren"
+    if "be_enterprise" in ids and _number_pattern(ids["be_enterprise"], False).search(text):
+        return "be_enterprise"
+    if "lu_rcs" in ids and re.search(rf"\bB\s?{ids['lu_rcs']}(?!\d)", text, re.I):
+        return "lu_rcs"
     return None
 
 

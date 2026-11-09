@@ -18,6 +18,11 @@ log = logging.getLogger("datamine.queue")
 MAX_ATTEMPTS = 3
 # A lease is renewed by the worker heartbeat every minute, so a row untouched for this long
 # belongs to a worker that died (restart, redeploy, Render sleep). Default 15 minutes.
+# Failed rows whose error is transient get a fresh set of attempts after a cooldown, at most
+# MAX_CYCLES times in total. Errors starting with "permanent:" are never retried automatically.
+MAX_CYCLES = 3
+RETRY_COOLDOWN_MINUTES = 30
+PERMANENT_PREFIX = "permanent:"
 STALE_MINUTES = max(5, int(os.environ.get("QUEUE_STALE_MINUTES", "15") or 15))
 
 
@@ -44,6 +49,8 @@ def init_table(database_url: str) -> None:
                 PRIMARY KEY (country, registration_number)
             )
         """)
+        # Additive migration: number of automatic retry cycles already given to a failed row.
+        connection.execute("ALTER TABLE enrichment_queue ADD COLUMN IF NOT EXISTS cycles INTEGER NOT NULL DEFAULT 0")
         connection.execute("""
             CREATE INDEX IF NOT EXISTS enrichment_queue_ready_idx
             ON enrichment_queue (status, available_at, created_at)
@@ -95,9 +102,17 @@ def recover_stale(database_url: str, stale_minutes: int | None = None) -> dict[s
             WHERE status='processing' AND attempts < %s
               AND locked_at < NOW() - (%s * INTERVAL '1 minute')
         """, (MAX_ATTEMPTS, minutes)).rowcount
-    if failed or requeued:
-        log.warning("stale queue recovery: requeued=%s failed=%s", requeued, failed)
-    return {"requeued": max(requeued, 0), "failed": max(failed, 0)}
+        retried = connection.execute("""
+            UPDATE enrichment_queue
+            SET status='pending', attempts=0, cycles=cycles+1, available_at=NOW(),
+                locked_at=NULL, updated_at=NOW()
+            WHERE status='failed' AND cycles < %s
+              AND COALESCE(last_error, '') NOT LIKE %s
+              AND updated_at < NOW() - (%s * INTERVAL '1 minute')
+        """, (MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).rowcount
+    if failed or requeued or retried:
+        log.warning("queue recovery: requeued=%s failed=%s transient_retried=%s", requeued, failed, retried)
+    return {"requeued": max(requeued, 0), "failed": max(failed, 0), "retried": max(retried, 0)}
 
 
 def claim_batch(database_url: str, limit: int) -> list[dict[str, Any]]:
@@ -159,8 +174,10 @@ def has_ready_work(database_url: str) -> bool:
             SELECT 1 FROM enrichment_queue
             WHERE (status IN ('pending','failed') AND attempts < %s)
                OR (status='processing' AND locked_at < NOW() - (%s * INTERVAL '1 minute'))
+               OR (status='failed' AND cycles < %s AND COALESCE(last_error, '') NOT LIKE %s
+                   AND updated_at < NOW() - (%s * INTERVAL '1 minute'))
             LIMIT 1
-        """, (MAX_ATTEMPTS, STALE_MINUTES)).fetchone()
+        """, (MAX_ATTEMPTS, STALE_MINUTES, MAX_CYCLES, PERMANENT_PREFIX + "%", RETRY_COOLDOWN_MINUTES)).fetchone()
     return row is not None
 
 
@@ -176,19 +193,22 @@ def mark_done(database_url: str, record: dict[str, Any]) -> None:
         """, key)
 
 
-def mark_failed(database_url: str, record: dict[str, Any], error: str) -> None:
+def mark_failed(database_url: str, record: dict[str, Any], error: str, permanent: bool = False) -> None:
+    """Record a failure. Transient: retry with exponential backoff (30s, 60s, 120s... max 15 min)
+    until MAX_ATTEMPTS. Permanent: fail immediately with a "permanent:" reason that is never retried."""
     key = record_key(record)
     if not key:
         return
-    log.warning("enrichment failed for %s: %s", key, error[:200])
+    log.warning("enrichment failed for %s (%s): %s", key, "permanent" if permanent else "transient", error[:200])
+    message = (PERMANENT_PREFIX + " " + error if permanent else error)[:500]
     with _connect(database_url) as connection:
         connection.execute("""
             UPDATE enrichment_queue
-            SET status = CASE WHEN attempts >= %s THEN 'failed' ELSE 'pending' END,
-                available_at = NOW() + (LEAST(300, 30 * GREATEST(attempts,1)) * INTERVAL '1 second'),
+            SET status = CASE WHEN %s OR attempts >= %s THEN 'failed' ELSE 'pending' END,
+                available_at = NOW() + (LEAST(900, 30 * POWER(2, GREATEST(attempts,1) - 1)) * INTERVAL '1 second'),
                 locked_at=NULL, last_error=%s, updated_at=NOW()
             WHERE country=%s AND registration_number=%s
-        """, (MAX_ATTEMPTS, error[:500], key[0], key[1]))
+        """, (permanent, MAX_ATTEMPTS, message, key[0], key[1]))
 
 
 def queue_status(database_url: str) -> dict[str, Any]:
@@ -205,11 +225,17 @@ def queue_status(database_url: str) -> dict[str, Any]:
             FROM enrichment_queue WHERE last_error IS NOT NULL
             ORDER BY updated_at DESC LIMIT 5
         """).fetchall()
+        causes = connection.execute("""
+            SELECT LEFT(COALESCE(last_error, 'no error recorded'), 70) AS cause, COUNT(*)
+            FROM enrichment_queue WHERE status='failed'
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 8
+        """).fetchall()
     result: dict[str, Any] = {"pending": 0, "processing": 0, "done": 0, "failed": 0, "total": 0}
     for status, count in rows:
         result[status] = int(count)
         result["total"] += int(count)
     result["stale"] = int(stale)
+    result["failedByCause"] = [{"cause": c[0], "count": int(c[1])} for c in causes]
     result["recentErrors"] = [
         {"country": e[1], "registrationNumber": e[0], "status": e[2], "attempts": e[3], "error": e[4]}
         for e in errors

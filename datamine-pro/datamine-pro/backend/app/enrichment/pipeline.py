@@ -83,9 +83,19 @@ def _cap_ownership(status: str, same: bool) -> str:
     return {VERIFIED: PARTIAL, PARTIAL: UNVERIFIED}.get(status, status)
 
 
+def _record_source_failure(exc: Exception, errors: list[str] | None, blocked: list[str] | None) -> None:
+    """Transient failures make discovery inconclusive (retry); a source that refuses us is only
+    noted - its refusal is neither proof that no website exists nor a reason to retry forever."""
+    text = str(exc)[:120] or type(exc).__name__
+    target = blocked if getattr(exc, "permanent", False) else errors
+    if target is not None:
+        target.append(text)
+
+
 async def _candidate_urls(
     company: dict[str, Any], wikidata: WikidataLookup | None, osm: OsmLookup | None = None,
     errors: list[str] | None = None,
+    blocked: list[str] | None = None,
 ) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     seen_hosts: set[str] = set()
@@ -104,15 +114,13 @@ async def _candidate_urls(
             for site in await wikidata(siren):
                 add(site, "wikidata")
         except Exception as exc:  # a source failure never fails the company, but is recorded
-            if errors is not None:
-                errors.append(str(exc)[:120] or type(exc).__name__)
+            _record_source_failure(exc, errors, blocked)
     if osm:
         try:
             for site in await osm(company):
                 add(site, "openstreetmap")
         except Exception as exc:
-            if errors is not None:
-                errors.append(str(exc)[:120] or type(exc).__name__)
+            _record_source_failure(exc, errors, blocked)
     for guess in guess_domains(str(company.get("name") or "")):
         add(guess, "domain_guess")
     return candidates
@@ -140,6 +148,7 @@ def _empty_result(today: date) -> dict[str, Any]:
         "contactPhoneSource": None,
         "candidatesChecked": [],
         "sourceErrors": [],
+        "sourcesBlocked": [],
         "discoveryComplete": True,
     }
 
@@ -153,7 +162,7 @@ async def enrich_company(
 ) -> dict[str, Any]:
     today = today or date.today()
     result = _empty_result(today)
-    candidates = await _candidate_urls(company, wikidata, osm, result["sourceErrors"])
+    candidates = await _candidate_urls(company, wikidata, osm, result["sourceErrors"], result["sourcesBlocked"])
 
     best: tuple[str, str, Verification, list[PageFacts]] | None = None  # url, source, verification, pages
     weak: tuple[str, Verification] | None = None
@@ -184,14 +193,7 @@ async def enrich_company(
             c["source"] == "registry" and c["outcome"] == "unreachable_or_not_permitted"
             for c in result["candidatesChecked"]
         )
-        # Wikidata currently returns HTTP 403 from this hosting environment. Retrying the
-        # same blocked public endpoint cannot improve this record; keep the error for audit,
-        # but allow OSM + verified domain candidates to complete without exhausting retries.
-        blocking_errors = [
-            error for error in result["sourceErrors"]
-            if not re.match(r"wikidata HTTP 403$", error.strip(), re.I)
-        ]
-        if blocking_errors or registry_unreached:
+        if result["sourceErrors"] or registry_unreached:
             result["discoveryComplete"] = False
         if weak:
             result["officialWebsiteStatus"] = UNVERIFIED
@@ -203,6 +205,11 @@ async def enrich_company(
             if not company.get("website")
             else "The registry-listed website could not be reached or inspected."
         )
+        if result["sourcesBlocked"]:
+            result["b2cExplanation"] += (
+                " Some public sources refused access (" + "; ".join(result["sourcesBlocked"])
+                + "); that is not evidence that no website exists."
+            )
         return result
 
     root, source, verification, pages = best

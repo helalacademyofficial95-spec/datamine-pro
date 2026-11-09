@@ -133,3 +133,10 @@ On Vercel, add the same variable under Project → Settings → Environment Vari
 - A company is marked `done` only when discovery really ran. If Wikidata/OpenStreetMap failed or the registry site was unreachable, the result is saved as inconclusive (`discoveryComplete: false`, `sourceErrors`) and the row is retried with backoff.
 - `POST /enrichment/queue/requeue-failed` (admin token) gives failed rows a fresh set of attempts.
 - Discovery sources: registry website, Wikidata (by SIREN), OpenStreetMap/Nominatim (name + postcode/city), and domain guesses verified on the site itself. A general web-search provider is not configured (it needs an API key), so companies without a Wikidata/OSM entry or a guessable domain stay "Not Found".
+
+### Source failures and retries
+
+- A public source that **refuses** access (HTTP 401/403/451, e.g. Wikidata from some hosts) is recorded in `sourcesBlocked`. It is not retried per company and is never treated as proof that no website exists.
+- A **transient** failure (timeout, 429, 5xx) is retried with bounded exponential backoff inside the lookup, then makes the result inconclusive so the queue retries it (30s, 60s, 120s... max 15 min, 3 attempts).
+- Failed rows with transient causes are automatically given a fresh set of attempts after 30 minutes, at most 3 times (`cycles` column, added with `ADD COLUMN IF NOT EXISTS`). Errors starting with `permanent:` are never retried. `/enrichment/status` lists failures grouped by cause (`queue.failedByCause`).
+- Ownership checks use the national identifier of each country: SIREN/SIRET (France), KBO/BCE enterprise number (Belgium), RCS `B` number (Luxembourg). OSM searches are scoped to the company's country.

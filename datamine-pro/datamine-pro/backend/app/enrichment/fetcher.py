@@ -154,26 +154,70 @@ class HttpFetcher:
 
 
 class LookupFailed(Exception):
-    """An external discovery source failed (as opposed to legitimately finding nothing)."""
+    """An external discovery source failed (as opposed to legitimately finding nothing).
+
+    permanent=True means the source refuses us (401/403/451): retrying cannot help, and the
+    refusal is not evidence that the company has no website.
+    """
+
+    def __init__(self, message: str, permanent: bool = False):
+        super().__init__(message)
+        self.permanent = permanent
+
+
+TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504}
+PERMANENT_STATUS = {401, 403, 451}
+
+
+async def _get_source(client: httpx.AsyncClient, label: str, url: str, headers: dict[str, str],
+                      pause: float, tries: int = 3) -> httpx.Response:
+    """GET one public source with bounded exponential backoff on transient failures.
+
+    Raises LookupFailed (permanent for 401/403/451, transient otherwise); never loops forever.
+    """
+    delay = 2.0
+    last = "unknown error"
+    for attempt in range(tries):
+        try:
+            response = await client.get(url, headers=headers, timeout=15.0)
+        except httpx.HTTPError as exc:
+            last = f"{label} unreachable: {type(exc).__name__}"
+        else:
+            await asyncio.sleep(pause)
+            code = response.status_code
+            if code == 200:
+                return response
+            if code in PERMANENT_STATUS:
+                raise LookupFailed(f"{label} HTTP {code}", permanent=True)
+            last = f"{label} HTTP {code}"
+            if code not in TRANSIENT_STATUS:
+                raise LookupFailed(last, permanent=True)
+            try:
+                delay = min(20.0, max(delay, float(response.headers.get("Retry-After", delay))))
+            except (TypeError, ValueError):
+                pass
+        if attempt < tries - 1:
+            await asyncio.sleep(delay)
+            delay = min(20.0, delay * 2)
+    raise LookupFailed(last)
 
 
 def make_wikidata_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[str], Awaitable[list[str]]]:
     """Free, keyless Wikidata SPARQL lookup (official website by SIREN). Serialised: one query at a time."""
     gate = asyncio.Semaphore(1)
+    blocked: dict[str, bool] = {"value": False}
 
     async def lookup(siren: str) -> list[str]:
+        if blocked["value"]:  # the host refuses us: do not hammer it for every company
+            raise LookupFailed("wikidata HTTP 403", permanent=True)
         async with gate:
             try:
-                response = await client.get(
-                    wikidata_url(siren),
-                    headers={"User-Agent": user_agent, "Accept": "application/sparql-results+json"},
-                    timeout=15.0,
-                )
-            except httpx.HTTPError as exc:
-                raise LookupFailed(f"wikidata unreachable: {type(exc).__name__}") from exc
-            await asyncio.sleep(0.5)
-            if response.status_code != 200:
-                raise LookupFailed(f"wikidata HTTP {response.status_code}")
+                response = await _get_source(
+                    client, "wikidata", wikidata_url(siren),
+                    {"User-Agent": user_agent, "Accept": "application/sparql-results+json"}, 0.5)
+            except LookupFailed as exc:
+                blocked["value"] = exc.permanent
+                raise
             return parse_wikidata_text(response.text)
 
     return lookup
@@ -192,17 +236,10 @@ def make_osm_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[dic
         if not name or not (postal or city):
             return []
         async with gate:
-            try:
-                response = await client.get(
-                    osm_search_url(name, postal, city, str(company.get('country') or 'France')),
-                    headers={"User-Agent": user_agent, "Accept": "application/json"},
-                    timeout=15.0,
-                )
-            except httpx.HTTPError as exc:
-                raise LookupFailed(f"openstreetmap unreachable: {type(exc).__name__}") from exc
-            await asyncio.sleep(1.1)
-            if response.status_code != 200:
-                raise LookupFailed(f"openstreetmap HTTP {response.status_code}")
+            response = await _get_source(
+                client, "openstreetmap",
+                osm_search_url(name, postal, city, str(company.get("country") or "France")),
+                {"User-Agent": user_agent, "Accept": "application/json"}, 1.1)
             try:
                 return parse_osm_response(response.json(), name)
             except ValueError as exc:
