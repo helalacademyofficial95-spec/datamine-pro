@@ -1,3 +1,4 @@
+import { nafDivisionLabel } from "./naf";
 import type { Company, Country, SortDir, SortKey, VerificationStatus } from "./types";
 
 export const EMPLOYEE_BANDS = [
@@ -38,7 +39,7 @@ export interface CompanyFilters {
 
 /** Business category shown in the table, filters and exports. Empty when the registry gave none. */
 export function categoryOf(c: Company): string {
-  return (c.nafLabel ?? "").trim();
+  return (c.nafLabel ?? "").trim() || nafDivisionLabel(c.nafCode);
 }
 
 /** Sorted distinct categories present in the data, for the category filter. */
