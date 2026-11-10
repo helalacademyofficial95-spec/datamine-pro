@@ -81,6 +81,11 @@ def test_status_is_public_and_reports_whether_run_is_enabled(calls):
 def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monkeypatch):
     requeued = []
     resumed = []
+    enqueued = []
+
+    def fake_enqueue(database_url, records):
+        enqueued.append((database_url, records))
+        return len(records)
 
     def fake_requeue(database_url, version):
         requeued.append((database_url, version))
@@ -90,6 +95,7 @@ def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monk
         resumed.append(kwargs)
         return True
 
+    monkeypatch.setattr("app.enrichment_routes.durable_queue.enqueue_records", fake_enqueue)
     monkeypatch.setattr("app.enrichment_routes.durable_queue.requeue_outdated", fake_requeue)
     monkeypatch.setattr(runner, "resume_if_needed", fake_resume_if_needed)
 
@@ -97,6 +103,7 @@ def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monk
     assert c.post("/enrichment/queue/reprocess-outdated").status_code == 401
     response = c.post("/enrichment/queue/reprocess-outdated", headers={"X-Admin-Token": "s3cret"})
     assert response.status_code == 202
-    assert response.json() == {"requeued": 12, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": True}
+    assert response.json() == {"requeued": 12, "newlyQueued": 0, "outdatedRecordsFound": 0, "recordsScanned": 0, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": True}
+    assert enqueued == [("postgres://x", [])]
     assert requeued == [("postgres://x", runner.ENRICHMENT_VERSION)]
     assert len(resumed) == 1
