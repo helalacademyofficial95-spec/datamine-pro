@@ -229,17 +229,32 @@ def make_osm_lookup(client: httpx.AsyncClient, user_agent: str) -> Callable[[dic
     from .verify import _postal_and_city  # local import: avoids a module cycle
 
     gate = asyncio.Semaphore(1)
+    # Nominatim is a shared public service with strict usage limits. Once it returns
+    # HTTP 429, stop querying it for the remainder of this worker process. OSM is an
+    # optional discovery source: its rate limit must not force every company through
+    # three full-company retries. Other sources and verified domain candidates continue.
+    rate_limited = {"value": False}
 
     async def lookup(company: dict) -> list[str]:
+        if rate_limited["value"]:
+            return []
         name = str(company.get("name") or "")
         postal, city = _postal_and_city(str(company.get("address") or ""))
         if not name or not (postal or city):
             return []
         async with gate:
-            response = await _get_source(
-                client, "openstreetmap",
-                osm_search_url(name, postal, city, str(company.get("country") or "France")),
-                {"User-Agent": user_agent, "Accept": "application/json"}, 1.1)
+            if rate_limited["value"]:
+                return []
+            try:
+                response = await _get_source(
+                    client, "openstreetmap",
+                    osm_search_url(name, postal, city, str(company.get("country") or "France")),
+                    {"User-Agent": user_agent, "Accept": "application/json"}, 1.1)
+            except LookupFailed as exc:
+                if "HTTP 429" in str(exc):
+                    rate_limited["value"] = True
+                    return []
+                raise
             try:
                 return parse_osm_response(response.json(), name)
             except ValueError as exc:

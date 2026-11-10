@@ -8,7 +8,7 @@ import pytest
 httpx = pytest.importorskip("httpx")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.enrichment.fetcher import HttpFetcher  # noqa: E402
+from app.enrichment.fetcher import HttpFetcher, LookupFailed, make_osm_lookup  # noqa: E402
 
 PUBLIC = ["93.184.216.34"]
 
@@ -128,3 +128,25 @@ def test_network_errors_become_none():
         raise httpx.ConnectError("down")
 
     assert fetch(handler, "https://exemple.fr/") is None
+
+
+
+def test_osm_429_opens_worker_local_circuit_breaker(monkeypatch):
+    calls = 0
+
+    async def limited_source(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise LookupFailed("openstreetmap HTTP 429")
+
+    monkeypatch.setattr("app.enrichment.fetcher._get_source", limited_source)
+
+    async def go():
+        async with httpx.AsyncClient() as client:
+            lookup = make_osm_lookup(client, "DataMineProTest/1.0")
+            company = {"name": "Example Shop", "address": "75001 Paris", "country": "France"}
+            assert await lookup(company) == []
+            assert await lookup(company) == []
+
+    asyncio.run(go())
+    assert calls == 1
