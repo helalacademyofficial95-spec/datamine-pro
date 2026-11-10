@@ -111,13 +111,39 @@ def build_router(
             raise HTTPException(status_code=401, detail="Missing or invalid admin token.")
         if not database_url:
             raise HTTPException(status_code=503, detail="Persistent storage is not configured.")
+        # Some older enrichment rows predate the durable queue. Rebuild queue entries for
+        # those rows from the preserved extraction_jobs source records before requeueing.
+        # This is idempotent: the queue primary key prevents duplicates, and enqueue_records
+        # never resets completed/processing rows. requeue_outdated below resets only old results.
+        records = await asyncio.to_thread(load_records)
+        enriched = await asyncio.to_thread(store.load_map, database_url)
+        outdated_records = []
+        for record in records:
+            key = runner.record_key(record)
+            data = enriched.get(key) if key else None
+            if data and (
+                str(data.get("enrichmentVersion", "0")) != str(runner.ENRICHMENT_VERSION)
+                or not data.get("discoveryComplete", False)
+            ):
+                outdated_records.append(record)
+
+        newly_queued = await asyncio.to_thread(
+            durable_queue.enqueue_records, database_url, outdated_records
+        )
         count = await asyncio.to_thread(
             durable_queue.requeue_outdated, database_url, runner.ENRICHMENT_VERSION
         )
         resumed = False
-        if count and not runner.state["running"]:
+        if (count or newly_queued) and not runner.state["running"]:
             resumed = await runner.resume_if_needed(database_url=database_url, user_agent=user_agent)
-        return {"requeued": count, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": resumed}
+        return {
+            "requeued": count,
+            "newlyQueued": newly_queued,
+            "outdatedRecordsFound": len(outdated_records),
+            "recordsScanned": len(records),
+            "pipelineVersion": runner.ENRICHMENT_VERSION,
+            "workerResumed": resumed,
+        }
 
 
     @router.post("/queue/requeue-failed", status_code=202)

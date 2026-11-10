@@ -27,10 +27,10 @@ def calls(monkeypatch):
     return recorded
 
 
-def client(token="s3cret", database_url="postgres://x"):
+def client(token="s3cret", database_url="postgres://x", records=None):
     app = FastAPI()
     app.include_router(build_router(
-        database_url=database_url, user_agent="TestBot/1.0", load_records=lambda: [], admin_token=token,
+        database_url=database_url, user_agent="TestBot/1.0", load_records=lambda: records or [], admin_token=token,
     ))
     return TestClient(app)
 
@@ -81,6 +81,11 @@ def test_status_is_public_and_reports_whether_run_is_enabled(calls):
 def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monkeypatch):
     requeued = []
     resumed = []
+    enqueued = []
+
+    def fake_enqueue(database_url, records):
+        enqueued.append((database_url, records))
+        return len(records)
 
     def fake_requeue(database_url, version):
         requeued.append((database_url, version))
@@ -90,13 +95,19 @@ def test_reprocess_outdated_requires_admin_token_and_requeues_safely(calls, monk
         resumed.append(kwargs)
         return True
 
+    monkeypatch.setattr("app.enrichment_routes.durable_queue.enqueue_records", fake_enqueue)
     monkeypatch.setattr("app.enrichment_routes.durable_queue.requeue_outdated", fake_requeue)
     monkeypatch.setattr(runner, "resume_if_needed", fake_resume_if_needed)
 
-    c = client()
+    record = {"country": "France", "siren": "123456789", "name": "Example SA"}
+    monkeypatch.setattr("app.enrichment_routes.store.load_map", lambda _db: {
+        ("France", "123456789"): {"enrichmentVersion": 1, "discoveryComplete": False}
+    })
+    c = client(records=[record])
     assert c.post("/enrichment/queue/reprocess-outdated").status_code == 401
     response = c.post("/enrichment/queue/reprocess-outdated", headers={"X-Admin-Token": "s3cret"})
     assert response.status_code == 202
-    assert response.json() == {"requeued": 12, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": True}
+    assert response.json() == {"requeued": 12, "newlyQueued": 1, "outdatedRecordsFound": 1, "recordsScanned": 1, "pipelineVersion": runner.ENRICHMENT_VERSION, "workerResumed": True}
+    assert enqueued == [("postgres://x", [record])]
     assert requeued == [("postgres://x", runner.ENRICHMENT_VERSION)]
     assert len(resumed) == 1
