@@ -1,0 +1,34 @@
+name: tmp sample (not for merge)
+on:
+  pull_request:
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarise unverified candidates
+        run: |
+          curl -sS --max-time 120 --retry 2 "https://datamine-pro-api.onrender.com/companies?limit=2000" -o c.json || true
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open("c.json"))
+          except Exception as e:
+              print("parse error", e); raise SystemExit
+          recs = d if isinstance(d, list) else d.get("companies") or d.get("items") or d.get("records") or []
+          print("records", len(recs), "keys", list(d.keys())[:6] if isinstance(d, dict) else "list")
+          n = 0
+          for r in recs:
+              e = r.get("enrichment") or {}
+              if e.get("officialWebsiteStatus") == "Unverified" and e.get("officialWebsiteCandidate"):
+                  ev = [x.get("type") for x in e.get("officialWebsiteEvidence") or []]
+                  print("U|", r.get("name"), "|", r.get("address"), "|", e["officialWebsiteCandidate"], "|", ev, "|", e.get("candidatesChecked", [{}])[0].get("source"))
+                  n += 1
+                  if n >= 45: break
+          m = 0
+          for r in recs:
+              e = r.get("enrichment") or {}
+              if e.get("b2cStatus") == "Not Found" and e.get("officialWebsiteStatus") == "Verified":
+                  print("B|", r.get("name"), "|", e.get("officialWebsite"), "|", e.get("b2cSiteType"), "|", (e.get("b2cExplanation") or "")[:110])
+                  m += 1
+                  if m >= 25: break
+          PY
