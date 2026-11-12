@@ -60,7 +60,7 @@ def test_guess_domains_uses_trade_name_in_parentheses():
 def test_guess_domains_bounded_and_skips_empty_or_tiny():
     assert guess_domains("SARL") == []
     assert guess_domains("AB") == []
-    assert len(guess_domains("UN DEUX TROIS QUATRE CINQ SIX SEPT HUIT")) <= 6
+    assert len(guess_domains("UN DEUX TROIS QUATRE CINQ SIX SEPT HUIT")) <= 10
 
 
 def test_social_marketplace_directory_are_never_company_sites():

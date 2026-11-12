@@ -149,7 +149,7 @@ def test_wikidata_candidate_is_tried_and_failures_are_swallowed():
 def test_request_budget_per_company_is_bounded():
     web = FakeWeb({})
     run(enrich_company({**COMPANY, "name": "UN DEUX TROIS QUATRE CINQ SIX SEPT HUIT NEUF"}, web, today=TODAY))
-    assert len(web.requests) <= 6, web.requests
+    assert len(web.requests) <= 10, web.requests
 
 
 def test_company_without_registration_number_cannot_reach_verified():

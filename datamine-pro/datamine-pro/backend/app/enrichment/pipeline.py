@@ -20,12 +20,13 @@ from .pagefacts import PageFacts, parse_html
 from .text import same_site
 from .verify import Verification, registration_ids, registry_published, verify_candidate
 
-MAX_CANDIDATES = 8
+MAX_CANDIDATES = 12
 LEGAL_LINK = re.compile(
     r"mentions[ -]?l[eé]gales?|legal[ -]?notice|\blegal\b|imprint|impressum|cgv|conditions[ -]g[eé]n[eé]rales|"
     r"a[ -]propos|\babout\b|qui[ -]sommes|\bcontact",
     re.I,
 )
+FALLBACK_LEGAL_PATHS = ("/mentions-legales", "/mentions-legales/", "/legal")
 LEGAL_PRIORITY = re.compile(r"mentions|legal|imprint|impressum", re.I)
 STATUS_RANK = {NOT_FOUND: 0, UNVERIFIED: 1, PARTIAL: 2, VERIFIED: 3}
 
@@ -64,10 +65,18 @@ async def collect_pages(fetcher: Fetcher, url: str) -> list[PageFacts]:
         return []
     home_facts = parse_html(home.html, home.url)
     pages = [home_facts]
-    for legal_url in pick_legal_links(home_facts):
+    legal_urls = pick_legal_links(home_facts)
+    if not legal_urls:
+        # Menus rendered by JavaScript hide the footer link; French/Belgian/Luxembourg sites are
+        # legally required to publish a legal notice, usually at one of these standard paths.
+        root = f"{urlparse(home.url).scheme}://{urlparse(home.url).netloc}"
+        legal_urls = [root + path for path in FALLBACK_LEGAL_PATHS]
+    for legal_url in legal_urls:
         page = await fetcher.get(legal_url)
-        if page and same_site(page.url, home.url):
+        if page and same_site(page.url, home.url) and page.url.rstrip("/") != home.url.rstrip("/"):
             pages.append(parse_html(page.html, page.url))
+            if len(pages) >= 3:
+                break
     return pages
 
 

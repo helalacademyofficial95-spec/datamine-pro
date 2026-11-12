@@ -83,3 +83,38 @@ def select_pending(
         if len(pending) >= limit:
             break
     return pending
+
+
+_RANK = {VERIFIED: 3, PARTIAL: 2, UNVERIFIED: 1}
+_SITE_FIELDS = (
+    "officialWebsite", "officialWebsiteStatus", "officialWebsiteSource", "officialWebsiteCandidate",
+    "officialWebsiteEvidence", "b2cWebsite", "b2cCandidateUrl", "b2cStatus", "b2cConfidence",
+    "b2cSiteType", "b2cEvidence", "b2cExplanation", "contactEmail", "contactEmailSource",
+    "contactPhone", "contactPhoneSource", "checkedAt",
+)
+
+
+def preserve_better(existing: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
+    """A re-check must never replace a better stored result with a worse one.
+
+    If the stored result has a stronger official-website status than the new run (e.g. a source
+    was unavailable this time), keep the stored website/B2C/contact evidence. A new result that
+    is as good or better wins; missing contacts are filled from the stored result only when it
+    is for the very same website.
+    """
+    if not existing:
+        return new
+    old_rank = _RANK.get(existing.get("officialWebsiteStatus") or "", 0) if existing.get("officialWebsite") else 0
+    new_rank = _RANK.get(new.get("officialWebsiteStatus") or "", 0) if new.get("officialWebsite") else 0
+    merged = dict(new)
+    if old_rank > new_rank:
+        for field in _SITE_FIELDS:
+            if field in existing:
+                merged[field] = existing[field]
+        merged["preservedFromPrevious"] = True
+        return merged
+    if old_rank and existing.get("officialWebsite") == new.get("officialWebsite"):
+        for field in ("contactEmail", "contactEmailSource", "contactPhone", "contactPhoneSource"):
+            if not merged.get(field) and existing.get(field):
+                merged[field] = existing[field]
+    return merged
