@@ -29,7 +29,7 @@ COUNTRY_TLDS = {
     "belgië": ("be", "com", "eu"),
     "luxembourg": ("lu", "com", "eu"),
 }
-MAX_GUESSES = 6
+MAX_GUESSES = 10
 
 # Hosts that are never a company's own website.
 SOCIAL_DOMAINS = {
@@ -114,6 +114,7 @@ def guess_domains(
             if len(tokens) > 2:
                 add("".join(tokens[:2]))
                 add("-".join(tokens[:2]))
+                add("".join(tokens[:3]))
     urls: list[str] = []
     for tld in tlds:
         for slug in slugs:

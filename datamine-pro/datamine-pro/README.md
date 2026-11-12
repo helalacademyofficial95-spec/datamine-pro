@@ -140,3 +140,10 @@ On Vercel, add the same variable under Project → Settings → Environment Vari
 - A **transient** failure (timeout, 429, 5xx) is retried with bounded exponential backoff inside the lookup, then makes the result inconclusive so the queue retries it (30s, 60s, 120s... max 15 min, 3 attempts).
 - Failed rows with transient causes are automatically given a fresh set of attempts after 30 minutes, at most 3 times (`cycles` column, added with `ADD COLUMN IF NOT EXISTS`). Errors starting with `permanent:` are never retried. `/enrichment/status` lists failures grouped by cause (`queue.failedByCause`).
 - Ownership checks use the national identifier of each country: SIREN/SIRET (France), KBO/BCE enterprise number (Belgium), RCS `B` number (Luxembourg). OSM searches are scoped to the company's country.
+
+### Coverage, preservation and keep-awake
+
+- `GET /enrichment/status` returns `coverage` computed from Neon: `enriched`, `officialWebsites`, `officialWebsitesVerified`, `b2cWebsites`, `emails`, `phones`, plus `companies` and `directors` from the extraction records (cached 60 s). Candidate URLs are never counted, only Verified/Partially Verified results.
+- A re-check never replaces a stronger stored result with a weaker one (`preserve_better`; marked `preservedFromPrevious`).
+- When a site's home page links no legal notice, `/mentions-legales` and `/legal` are tried; up to 10 name-derived domains are tested, each accepted only after on-site verification.
+- `.github/workflows/keepalive.yml` polls `/enrichment/status` every 10 minutes so Render Free stays awake and the worker resumes the queue. It uses no secrets.

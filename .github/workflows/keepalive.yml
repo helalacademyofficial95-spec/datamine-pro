@@ -1,0 +1,18 @@
+name: Keep backend awake while enrichment runs
+
+# Render Free sleeps after ~15 minutes without traffic, which stops the enrichment worker.
+# Polling the public /enrichment/status endpoint every 10 minutes wakes the service and lets it
+# resume the queue (the endpoint only drains existing queue rows; it needs no secret).
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Poll enrichment status
+        run: |
+          body=$(curl -sS --max-time 60 --retry 2 https://datamine-pro-api.onrender.com/enrichment/status || true)
+          echo "$body" | head -c 600

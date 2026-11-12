@@ -8,6 +8,7 @@ POST /enrichment/run     starts one resumable batch. Requires the X-Admin-Token 
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Callable
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
@@ -24,15 +25,31 @@ def build_router(
     admin_token: str,
 ) -> APIRouter:
     router = APIRouter(prefix="/enrichment", tags=["enrichment"])
+    record_counts: dict[str, float] = {"at": -1e9}
 
     @router.get("/status")
     async def enrichment_status() -> dict[str, Any]:
         enriched: int | None = None
+        coverage: dict[str, int] | None = None
         if database_url:
             try:
-                enriched = len(await asyncio.to_thread(store.load_map, database_url))
+                coverage = await asyncio.to_thread(store.coverage, database_url)
+                enriched = coverage["enriched"]
             except Exception:
                 enriched = None
+        # Director/contact names live on the extraction records, not on the enrichment rows.
+        if coverage is not None:
+            now = time.monotonic()
+            if now - record_counts["at"] > 60:  # status is polled often; reading every record is not free
+                try:
+                    records = await asyncio.to_thread(load_records)
+                    record_counts.update(at=now, companies=len(records),
+                                         directors=sum(1 for r in records if str(r.get("director") or "").strip()))
+                except Exception:
+                    pass
+            if "companies" in record_counts:
+                coverage["companies"] = record_counts["companies"]
+                coverage["directors"] = record_counts["directors"]
         queue = None
         if database_url:
             try:
@@ -44,7 +61,7 @@ def build_router(
         resumed = False
         if database_url and queue and not runner.state["running"]:
             resumed = await runner.resume_if_needed(database_url=database_url, user_agent=user_agent)
-        return {"batch": dict(runner.state), "enrichedCount": enriched, "queue": queue,
+        return {"batch": dict(runner.state), "enrichedCount": enriched, "coverage": coverage, "queue": queue,
                 "runEnabled": bool(admin_token), "workerResumed": resumed}
 
     @router.post("/run", status_code=202)

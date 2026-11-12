@@ -33,7 +33,13 @@ def load_map(database_url: str) -> dict[Key, dict[str, Any]]:
 
 
 def save_one(database_url: str, key: Key, data: dict[str, Any]) -> None:
+    from .merge import preserve_better
+
     with _connect(database_url) as connection:
+        row = connection.execute(
+            "SELECT data FROM company_enrichment WHERE country=%s AND registration_number=%s", key
+        ).fetchone()
+        data = preserve_better(row[0] if row and isinstance(row[0], dict) else None, data)
         connection.execute(
             """
             INSERT INTO company_enrichment (country, registration_number, data, enriched_at)
@@ -43,3 +49,23 @@ def save_one(database_url: str, key: Key, data: dict[str, Any]) -> None:
             """,
             (key[0], key[1], json.dumps(data, ensure_ascii=False)),
         )
+
+
+def coverage(database_url: str) -> dict[str, int]:
+    """Real counts computed in the database (nothing cached or simulated)."""
+    with _connect(database_url) as connection:
+        row = connection.execute("""
+            SELECT
+              COUNT(*),
+              COUNT(*) FILTER (WHERE data->>'officialWebsite' IS NOT NULL
+                               AND data->>'officialWebsiteStatus' IN ('Verified','Partially Verified')),
+              COUNT(*) FILTER (WHERE data->>'b2cWebsite' IS NOT NULL
+                               AND data->>'b2cStatus' IN ('Verified','Partially Verified')),
+              COUNT(*) FILTER (WHERE COALESCE(data->>'contactEmail','') <> ''),
+              COUNT(*) FILTER (WHERE COALESCE(data->>'contactPhone','') <> ''),
+              COUNT(*) FILTER (WHERE data->>'officialWebsite' IS NOT NULL
+                               AND data->>'officialWebsiteStatus' = 'Verified')
+            FROM company_enrichment
+        """).fetchone()
+    keys = ("enriched", "officialWebsites", "b2cWebsites", "emails", "phones", "officialWebsitesVerified")
+    return {k: int(v) for k, v in zip(keys, row)}
